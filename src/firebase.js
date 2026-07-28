@@ -1,3 +1,5 @@
+console.log("Firebase config", firebaseConfig);
+
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 
