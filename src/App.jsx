@@ -1025,7 +1025,7 @@ function CodeGate({ onSubmit }) {
     <div
       style={{
         background: C.surface, fontFamily: sans, maxWidth: 420, margin: "0 auto",
-        height: 780, borderRadius: 28, overflow: "hidden",
+        height: 780, borderRadius: 14, overflow: "hidden",
         display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
         boxShadow: "0 12px 32px rgba(0,0,0,0.45)", border: `1px solid ${C.outlineVariant}`,
         padding: 32,
@@ -1155,7 +1155,7 @@ function TopAppBar({ syncStatus, onMenu }) {
   return (
     <div className="flex items-center justify-between px-3" style={{ height: 60, flexShrink: 0 }}>
       <div className="flex items-center gap-1.5 pl-1.5">
-        <div style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 18 }}>Quest Log</div>
+        <div style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 18 }}>+ ULTRA - LEVEL 1</div>
       </div>
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-1">
@@ -1362,7 +1362,7 @@ export default function LifeRPG() {
     <div
       style={{
         background: C.surface, fontFamily: sans, maxWidth: 420, margin: "0 auto",
-        height: "100dvh", borderRadius: 28, overflow: "hidden",
+        height: "100dvh", borderRadius: 14, overflow: "hidden",
         display: "flex", flexDirection: "column",
         boxShadow: "0 12px 32px rgba(0,0,0,0.45)",
         border: `1px solid ${C.outlineVariant}`,
