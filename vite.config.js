@@ -12,8 +12,8 @@ export default defineConfig({
       registerType: "autoUpdate",
 
       manifest: {
-        name: "Life RPG",
-        short_name: "Life RPG",
+        name: "PlusUltra",
+        short_name: "+Ultra",
         description: "Gamify your self-improvement journey",
 
         theme_color: "#111827",
