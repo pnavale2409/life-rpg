@@ -1155,7 +1155,7 @@ function TopAppBar({ syncStatus, onMenu }) {
   return (
     <div className="flex items-center justify-between px-3" style={{ height: 60, flexShrink: 0 }}>
       <div className="flex items-center gap-1.5 pl-1.5">
-        <div style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 18 }}>+ ULTRA - LEVEL 1</div>
+        <div style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 18 }}>+U  -  Lv 1</div>
       </div>
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-1">
