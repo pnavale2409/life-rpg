@@ -1362,7 +1362,7 @@ export default function LifeRPG() {
     <div
       style={{
         background: C.surface, fontFamily: sans, maxWidth: 420, margin: "0 auto",
-        height: 780, borderRadius: 28, overflow: "hidden",
+        height: "100dvh", borderRadius: 28, overflow: "hidden",
         display: "flex", flexDirection: "column",
         boxShadow: "0 12px 32px rgba(0,0,0,0.45)",
         border: `1px solid ${C.outlineVariant}`,
