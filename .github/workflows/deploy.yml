@@ -17,6 +17,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -24,6 +25,8 @@ jobs:
         with:
           node-version: 20
           cache: npm
+
+      - uses: actions/configure-pages@v5
 
       - run: npm ci
 
@@ -47,6 +50,7 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
