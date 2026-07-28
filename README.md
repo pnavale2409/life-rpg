@@ -8,7 +8,7 @@ There's no real login — instead, you pick a **secret code**. Enter the same
 code on any device/browser and you'll see the same data. This is simple by
 design, but it means anyone who has both your code *and* your Firebase config
 could read/write that document — see **Security notes** below before you rely
-on this for anything sensitive.
+on this for anything sensitive..
 
 ---
 
