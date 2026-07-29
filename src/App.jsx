@@ -1,33 +1,87 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useContext, createContext } from "react";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { db, QUESTS_COLLECTION } from "./firebase.js";
 import {
   BookOpen, Dumbbell, Coins, ShieldCheck, ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
-  Mountain, Check, Minus, Plus, Save, Trophy, Crown, Lock, Unlock, RotateCcw, Home, MoreVertical,
-  CheckCircle2, CloudOff, Loader2, KeyRound, Copy,
+  Mountain, Check, Minus, Plus, Save, Trophy, Crown, Lock, RotateCcw, Home, MoreVertical,
+  CheckCircle2, CloudOff, Loader2, KeyRound, Copy, Sun, Moon, Sparkles, Calendar,
 } from "lucide-react";
 
 /* ---------------------------------------------------------------
-   MATERIAL 3 (DARK) TOKENS — tonal surface staircase + brand accents
+   THEME TOKENS
+   C is a map of CSS custom-property references. The actual colors
+   live in THEME_CSS below, scoped under .theme-dark / .theme-light
+   classes applied to the outer app shell — so every component below
+   can keep using C.xxx unchanged while the whole app re-themes.
 --------------------------------------------------------------- */
 const C = {
-  surface: "#121317",
-  surfaceLow: "#17181D",
-  container: "#1C1E24",
-  containerHigh: "#24262E",
-  containerHighest: "#2C2F39",
-  outline: "#383B45",
-  outlineVariant: "#282A32",
-  onSurface: "#E5E4E9",
-  onSurfaceVariant: "#9B9CA8",
-  faint: "#6C6D78",
-  danger: "#F2B8B5",
-  dangerContainer: "#4A2325",
-  wisdom: "#9C8CFF",
-  vitality: "#FF8A66",
-  wealth: "#F0C15C",
-  resolve: "#4FD8C4",
+  surface: "var(--surface)",
+  surfaceLow: "var(--surface-low)",
+  container: "var(--container)",
+  containerHigh: "var(--container-high)",
+  containerHighest: "var(--container-highest)",
+  outline: "var(--outline)",
+  outlineVariant: "var(--outline-variant)",
+  onSurface: "var(--on-surface)",
+  onSurfaceVariant: "var(--on-surface-variant)",
+  faint: "var(--faint)",
+  danger: "var(--danger)",
+  dangerContainer: "var(--danger-container)",
+  wisdom: "var(--wisdom)",
+  vitality: "var(--vitality)",
+  wealth: "var(--wealth)",
+  resolve: "var(--resolve)",
+  accent: "var(--accent)",
+  glow: "var(--glow)",
 };
+
+const THEME_CSS = `
+.theme-dark {
+  --surface: #070912;
+  --surface-low: #0B0E1A;
+  --container: #10131F;
+  --container-high: #161B2C;
+  --container-highest: #1E2438;
+  --outline: #2A3350;
+  --outline-variant: #1A2035;
+  --on-surface: #E7ECFF;
+  --on-surface-variant: #8891B0;
+  --faint: #545C7A;
+  --danger: #FF6B7A;
+  --danger-container: #3A1620;
+  --wisdom: #A88CFF;
+  --vitality: #FF6B4A;
+  --wealth: #FFC24B;
+  --resolve: #3FE0C5;
+  --accent: #4F8EFF;
+  --glow: rgba(79,142,255,0.35);
+  --shell-shadow: 0 20px 48px rgba(0,0,0,0.55);
+  --ripple: rgba(255,255,255,0.22);
+}
+.theme-light {
+  --surface: #EEF3FB;
+  --surface-low: #E3EAF7;
+  --container: #FFFFFF;
+  --container-high: #F3F6FC;
+  --container-highest: #E7EDF9;
+  --outline: #C7D2E8;
+  --outline-variant: #DCE4F3;
+  --on-surface: #16203A;
+  --on-surface-variant: #5B6683;
+  --faint: #93A0BE;
+  --danger: #D6394A;
+  --danger-container: #FBE3E5;
+  --wisdom: #6A46D6;
+  --vitality: #D8541F;
+  --wealth: #B37800;
+  --resolve: #0E8E7D;
+  --accent: #2F6FEF;
+  --glow: rgba(47,111,239,0.22);
+  --shell-shadow: 0 20px 48px rgba(30,50,100,0.18);
+  --ripple: rgba(20,40,90,0.12);
+}
+`;
+
 const sans = "'Roboto', 'Google Sans Text', system-ui, -apple-system, sans-serif";
 const mono = "'Roboto Mono', ui-monospace, 'SF Mono', Menlo, monospace";
 const NAV_H = 72;
@@ -40,6 +94,10 @@ const MT_START = new Date(2026, 7, 3);
 const MT_END = new Date(2026, 9, 30);
 
 const CODE_STORAGE_KEY = "life-rpg-code";
+const THEME_STORAGE_KEY = "life-rpg-theme";
+const READ_ONLY_CODE = "read";
+const OWNER_POINTER_DOC = "_owner_pointer_";
+const ReadOnlyContext = createContext(false);
 
 function dayIndex(d) {
   return Math.floor((d - QUEST_START) / 86400000) + 1;
@@ -52,6 +110,14 @@ function fmtDate(d) {
 }
 function clamp(n, lo, hi) {
   return Math.max(lo, Math.min(hi, n));
+}
+/* Our theme colors are CSS var() references (e.g. "var(--wisdom)") so a
+   trailing hex alpha suffix like `${color}66` — which worked when C.* held
+   literal hex strings — is invalid CSS on a var() and silently drops the
+   whole value. color-mix() is the correct way to add alpha to a custom
+   property at use-site. */
+function mix(colorVar, pct) {
+  return `color-mix(in srgb, ${colorVar} ${pct}%, transparent)`;
 }
 function weekdayCount(start, end) {
   let n = 0;
@@ -93,6 +159,40 @@ const MT_WEEKS = Array.from({ length: 13 }, (_, w) => {
   });
 });
 
+/* ---------------------------------------------------------------
+   RANK / XP — cosmetic HUD layer derived from the four raw stat scores.
+   totalXP is just wScore + vScore + weScore + rScore, so it ranges 0-400
+   (each stat maxes at 100) — no separate number to track. Rank bands get
+   incrementally wider (20/40/60/80/100 XP) so early ranks come quickly
+   and S stays a real reach. The XP bar fills toward the *next* rank,
+   resetting each time you cross a threshold.
+--------------------------------------------------------------- */
+const RANK_BANDS = [
+  { rank: "E", from: 0, to: 20 },
+  { rank: "D", from: 20, to: 60 },
+  { rank: "C", from: 60, to: 120 },
+  { rank: "B", from: 120, to: 200 },
+  { rank: "A", from: 200, to: 300 },
+  { rank: "S", from: 300, to: 380 },
+  { rank: "SS", from: 380, to: 400 },
+];
+function rankInfo(totalXP) {
+  const xp = clamp(totalXP, 0, 400);
+  const band = RANK_BANDS.find((b) => xp < b.to) || RANK_BANDS[RANK_BANDS.length - 1];
+  const progress = band.to > band.from ? (xp - band.from) / (band.to - band.from) : 1;
+  return { rank: band.rank, progress: clamp(progress, 0, 1), bandFrom: band.from, bandTo: band.to, xp };
+}
+/* Real hex values (not CSS vars) per rank per theme, so the card can tint
+   its glow/border/text with alpha-suffixed colors (e.g. `${mix(c, 33)}`), which
+   only works with concrete hex — CSS var() references can't take a
+   trailing alpha suffix like that. */
+const RANK_COLORS = {
+  dark: { E: "#8A93B8", D: "#4ADE80", C: "#4F8EFF", B: "#B388FF", A: "#FF9F45", S: "#FFD54F", SS: "#FF5C7A" },
+  light: { E: "#6E7997", D: "#16A34A", C: "#2F6FEF", B: "#7C4FE0", A: "#C05F0F", S: "#A9790A", SS: "#D6284A" },
+};
+function rankColor(rank, mode) {
+  return (RANK_COLORS[mode] || RANK_COLORS.dark)[rank] || (RANK_COLORS[mode] || RANK_COLORS.dark).C;
+}
 /* ---------------------------------------------------------------
    SECRET CODE HELPERS
 --------------------------------------------------------------- */
@@ -270,10 +370,12 @@ const ACHIEVEMENTS = [
 /* ---------------------------------------------------------------
    RIPPLE — a small, real Material touch response (state-layer + ripple)
 --------------------------------------------------------------- */
-function Touchable({ children, onClick, style, className, disabled, rippleColor = "rgba(255,255,255,0.25)" }) {
+function Touchable({ children, onClick, style, className, disabled, rippleColor, writeAction = false }) {
+  const readOnly = useContext(ReadOnlyContext);
+  const effectiveDisabled = disabled || (writeAction && readOnly);
   const ref = useRef(null);
   const fire = (e) => {
-    if (disabled) return;
+    if (effectiveDisabled) return;
     const el = ref.current;
     if (el) {
       const rect = el.getBoundingClientRect();
@@ -281,7 +383,7 @@ function Touchable({ children, onClick, style, className, disabled, rippleColor 
       const span = document.createElement("span");
       span.style.position = "absolute";
       span.style.borderRadius = "50%";
-      span.style.background = rippleColor;
+      span.style.background = rippleColor || "var(--ripple)";
       span.style.width = span.style.height = size + "px";
       span.style.left = (e.clientX - rect.left - size / 2) + "px";
       span.style.top = (e.clientY - rect.top - size / 2) + "px";
@@ -297,7 +399,7 @@ function Touchable({ children, onClick, style, className, disabled, rippleColor 
     <div
       ref={ref}
       onClick={fire}
-      style={{ position: "relative", overflow: "hidden", cursor: disabled ? "default" : "pointer", ...style }}
+      style={{ position: "relative", overflow: "hidden", cursor: effectiveDisabled ? "default" : "pointer", ...style }}
       className={className}
     >
       {children}
@@ -308,12 +410,12 @@ function Touchable({ children, onClick, style, className, disabled, rippleColor 
 /* ---------------------------------------------------------------
    SMALL UI PRIMITIVES
 --------------------------------------------------------------- */
-function Ring({ value, max, color, size = 52, stroke = 5, children }) {
+function Ring({ value, max, color, size = 52, stroke = 5, children, glow = false }) {
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const pct = clamp(value / max, 0, 1);
   return (
-    <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+    <div style={{ position: "relative", width: size, height: size, flexShrink: 0, filter: glow ? `drop-shadow(0 0 6px ${color})` : "none" }}>
       <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={C.outlineVariant} strokeWidth={stroke} />
         <circle
@@ -329,9 +431,40 @@ function Ring({ value, max, color, size = 52, stroke = 5, children }) {
   );
 }
 
-function Check2({ checked, onClick, color }) {
+/* Icon slot — no shape, no border. Just the icon itself, centered in a
+   fixed-size box so layout/spacing stays identical to the old badge.
+   `glow` adds a soft drop-shadow in the icon's own color instead of a
+   background ring. */
+function Hex({ size = 44, color, glow = false, children }) {
   return (
-    <Touchable onClick={onClick} rippleColor={`${color}33`} style={{ borderRadius: "50%", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+    <div
+      style={{
+        width: size, height: size, flexShrink: 0,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        filter: glow ? `drop-shadow(0 0 7px ${mix(color, 60)})` : "none",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/* Diamond — quest-strip day marker (rotated square) */
+function Diamond({ size = 6, color, glow = false }) {
+  return (
+    <div
+      style={{
+        width: size, height: size, background: color, transform: "rotate(45deg)",
+        borderRadius: 1, boxShadow: glow ? `0 0 6px ${color}` : "none", flexShrink: 0,
+      }}
+    />
+  );
+}
+
+function Check2({ checked, onClick, color }) {
+  const readOnly = useContext(ReadOnlyContext);
+  return (
+    <Touchable onClick={onClick} writeAction rippleColor={`${mix(color, 20)}`} style={{ borderRadius: "50%", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: readOnly ? 0.7 : 1 }}>
       <div
         style={{
           width: 20, height: 20, borderRadius: 4,
@@ -348,15 +481,16 @@ function Check2({ checked, onClick, color }) {
 }
 
 function Counter({ value, max, onChange, color }) {
+  const readOnly = useContext(ReadOnlyContext);
   return (
-    <div className="flex items-center gap-1">
-      <Touchable onClick={() => onChange(clamp(value - 1, 0, max))} style={{ color: C.onSurfaceVariant, border: `1px solid ${C.outline}`, width: 34, height: 34, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }} rippleColor="rgba(255,255,255,0.15)">
+    <div className="flex items-center gap-1" style={{ opacity: readOnly ? 0.7 : 1 }}>
+      <Touchable writeAction onClick={() => onChange(clamp(value - 1, 0, max))} style={{ color: C.onSurfaceVariant, border: `1px solid ${C.outline}`, width: 34, height: 34, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <Minus size={14} />
       </Touchable>
       <span style={{ fontFamily: mono, color: C.onSurface, minWidth: 52, textAlign: "center", fontSize: 14 }}>
         {value} / {max}
       </span>
-      <Touchable onClick={() => onChange(clamp(value + 1, 0, max))} style={{ color, border: `1px solid ${color}`, width: 34, height: 34, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }} rippleColor={`${color}33`}>
+      <Touchable writeAction onClick={() => onChange(clamp(value + 1, 0, max))} style={{ color, border: `1px solid ${color}`, width: 34, height: 34, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }} rippleColor={`${mix(color, 20)}`}>
         <Plus size={14} />
       </Touchable>
     </div>
@@ -364,7 +498,7 @@ function Counter({ value, max, onChange, color }) {
 }
 
 /* ---------------------------------------------------------------
-   QUEST STRIP — horizontal scroll of week dots, Material stepper feel
+   QUEST STRIP — horizontal scroll of week diamonds, HUD tracker feel
 --------------------------------------------------------------- */
 function QuestStrip({ today }) {
   const idx = clamp(dayIndex(today), 1, TOTAL_DAYS);
@@ -380,28 +514,31 @@ function QuestStrip({ today }) {
           return (
             <div
               key={wi}
-              className="flex flex-col items-center gap-1.5 flex-shrink-0 rounded-2xl"
+              className="flex flex-col items-center gap-1.5 flex-shrink-0"
               style={{
-                padding: "6px 8px",
-                background: isCurrent ? `${C.wealth}1F` : "transparent",
+                padding: "6px 10px",
+                borderRadius: 12,
+                background: isCurrent ? `${mix(C.accent, 13)}` : "transparent",
+                border: isCurrent ? `1px solid ${mix(C.accent, 33)}` : "1px solid transparent",
+                boxShadow: isCurrent ? `0 0 10px ${C.glow}` : "none",
               }}
             >
-              <div className="flex gap-[3px]">
+              <div className="flex gap-[4px]">
                 {week.map((n) => {
                   const state = n < idx ? "past" : n === idx ? "now" : "future";
                   return (
-                    <div
+                    <Diamond
                       key={n}
-                      style={{
-                        width: 6, height: 6, borderRadius: "50%",
-                        background: state === "past" ? C.resolve : state === "now" ? C.wealth : C.outlineVariant,
-                        boxShadow: state === "now" ? `0 0 5px ${C.wealth}` : "none",
-                      }}
+                      size={n === idx ? 7 : 6}
+                      color={state === "past" ? C.resolve : state === "now" ? C.accent : C.outlineVariant}
+                      glow={state === "now"}
                     />
                   );
                 })}
               </div>
-              <span style={{ fontFamily: mono, fontSize: 9.5, color: isCurrent ? C.wealth : C.faint }}>W{wi + 1}</span>
+              <span style={{ fontFamily: mono, fontSize: 9.5, fontWeight: isCurrent ? 700 : 500, color: isCurrent ? C.accent : C.faint, letterSpacing: 0.5 }}>
+                W{wi + 1}
+              </span>
             </div>
           );
         })}
@@ -411,21 +548,38 @@ function QuestStrip({ today }) {
 }
 
 /* ---------------------------------------------------------------
-   ATTRIBUTE ROW — Material list item, full-width, stacked vertically
+   ATTRIBUTE ROW — HUD stat card with hex emblem
 --------------------------------------------------------------- */
 function AttrRow({ icon: Icon, label, score, color, onClick, tagline }) {
   return (
-    <Touchable onClick={onClick} rippleColor={`${color}22`} style={{ background: C.container, borderRadius: 20, display: "block", marginBottom: 10 }}>
+    <Touchable
+      onClick={onClick}
+      style={{
+        background: `linear-gradient(120deg, var(--container-high), var(--container))`,
+        border: `1px solid ${C.outlineVariant}`,
+        borderRadius: 18, display: "block", marginBottom: 10,
+      }}
+    >
+      <div
+        style={{
+          position: "absolute", inset: 0, borderRadius: 18,
+          background: `linear-gradient(90deg, ${mix(color, 15)}, transparent 34%)`,
+          pointerEvents: "none",
+        }}
+      />
       <div className="flex items-center gap-4 p-4">
-        <div style={{ width: 44, height: 44, borderRadius: 14, background: `${color}26`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <Icon size={20} color={color} />
-        </div>
+        <Hex size={46} color={color}>
+          <Icon size={24} color={color} />
+        </Hex>
         <div className="flex-1 min-w-0">
-          <div style={{ fontFamily: sans, fontWeight: 500, color: C.onSurface, fontSize: 15.5 }}>{label}</div>
-          <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginTop: 1 }}>{tagline}</p>
+          <span style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 14.5, letterSpacing: 0.3 }}>{label.toUpperCase()}</span>
+          <p style={{ color: C.onSurfaceVariant, fontSize: 11.5, marginTop: 2 }}>{tagline}</p>
+          <div style={{ height: 4, background: C.outlineVariant, borderRadius: 3, marginTop: 6, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${clamp(score, 0, 100)}%`, background: color, borderRadius: 3, boxShadow: `0 0 6px ${mix(color, 60)}`, transition: "width 0.4s ease" }} />
+          </div>
         </div>
         <Ring value={score} max={100} color={color} size={44} stroke={4}>
-          <span style={{ fontFamily: mono, fontSize: 11, color: C.onSurface }}>{Math.round(score)}</span>
+          <span style={{ fontFamily: mono, fontSize: 11, fontWeight: 700, color: C.onSurface }}>{Math.round(score)}</span>
         </Ring>
         <ChevronRight size={18} color={C.faint} />
       </div>
@@ -434,32 +588,44 @@ function AttrRow({ icon: Icon, label, score, color, onClick, tagline }) {
 }
 
 /* ---------------------------------------------------------------
-   SECTION HEADER — compact Material list-section style
+   SECTION HEADER
 --------------------------------------------------------------- */
 function ScreenHeader({ title, sub, color, score }) {
   return (
     <div className="px-4 pt-5 pb-4 flex items-center justify-between">
       <div>
-        <div style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 22 }}>{title}</div>
-        <p style={{ color: C.onSurfaceVariant, fontSize: 12.5, marginTop: 2 }}>{sub}</p>
+        <div className="flex items-center gap-2">
+          <Diamond size={7} color={color} glow />
+          <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 22, letterSpacing: 0.3 }}>{title.toUpperCase()}</div>
+        </div>
+        <p style={{ color: C.onSurfaceVariant, fontSize: 12.5, marginTop: 2, marginLeft: 15 }}>{sub}</p>
       </div>
       <div className="text-right flex-shrink-0">
-        <div style={{ fontFamily: mono, color, fontSize: 20, fontWeight: 700 }}>{score.toFixed(1)}</div>
+        <div style={{ fontFamily: mono, color, fontSize: 20, fontWeight: 700, textShadow: `0 0 10px ${mix(color, 40)}` }}>{score.toFixed(1)}</div>
         <div style={{ fontFamily: mono, color: C.faint, fontSize: 10.5 }}>/ 100</div>
       </div>
     </div>
   );
 }
 
-function Mission({ title, points, children, color, defaultOpen = false }) {
+function Mission({ title, points, earned, children, color, defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div style={{ background: C.container, borderRadius: 18 }} className="mx-4 mb-3 overflow-hidden">
-      <Touchable onClick={() => setOpen((o) => !o)} rippleColor="rgba(255,255,255,0.06)" style={{ display: "block" }}>
+    <div style={{ position: "relative", background: C.container, borderRadius: 16 }} className="mx-4 mb-3 overflow-hidden">
+      <div
+        style={{
+          position: "absolute", left: 0, top: "22%", bottom: "22%", width: 3, borderRadius: 3,
+          background: `linear-gradient(180deg, transparent, ${color}, transparent)`,
+          boxShadow: `0 0 8px ${mix(color, 60)}`,
+        }}
+      />
+      <Touchable onClick={() => setOpen((o) => !o)} style={{ display: "block" }}>
         <div className="w-full flex items-center justify-between p-4">
           <span style={{ fontFamily: sans, fontWeight: 500, color: C.onSurface, fontSize: 14.5 }}>{title}</span>
           <div className="flex items-center gap-2 flex-shrink-0">
-            <span style={{ fontFamily: mono, color, fontSize: 11.5 }}>{points} pts</span>
+            <span style={{ fontFamily: mono, color, fontSize: 11.5 }}>
+              {earned !== undefined ? `${Math.round(earned * 10) / 10} / ${points} pts` : `${points} pts`}
+            </span>
             {open ? <ChevronUp size={16} color={C.onSurfaceVariant} /> : <ChevronDown size={16} color={C.onSurfaceVariant} />}
           </div>
         </div>
@@ -477,13 +643,14 @@ function WisdomTab({ s, set }) {
   return (
     <div className="pb-4">
       <ScreenHeader title="Wisdom" sub="Knowledge, learning and decision-making." color={C.wisdom} score={score} />
-      <Mission title="The 48 Laws of Power" points={50} color={C.wisdom}>
+      <Mission title="The 48 Laws of Power" points={50} earned={s.laws.filter(Boolean).length + (s.lawsFinished ? 2 : 0)} color={C.wisdom}>
         <div className="grid grid-cols-6 gap-2 mb-3">
           {s.laws.map((v, i) => (
             <Touchable
               key={i}
+              writeAction
               onClick={() => set((d) => { d.wisdom.laws[i] = !d.wisdom.laws[i]; })}
-              rippleColor={`${C.wisdom}33`}
+              rippleColor={`${mix(C.wisdom, 20)}`}
               style={{
                 fontFamily: mono, fontSize: 11, height: 32, borderRadius: 10,
                 background: v ? C.wisdom : C.containerHigh, color: v ? C.surface : C.onSurfaceVariant,
@@ -499,7 +666,7 @@ function WisdomTab({ s, set }) {
           <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>Finished the book (+2)</span>
         </label>
       </Mission>
-      <Mission title="Rich Dad Poor Dad" points={30} color={C.wisdom}>
+      <Mission title="Rich Dad Poor Dad" points={30} earned={s.rdpd.filter(Boolean).length * 3} color={C.wisdom}>
         <div className="flex flex-col">
           {s.rdpd.map((v, i) => (
             <label key={i} className="flex items-center gap-1">
@@ -509,7 +676,7 @@ function WisdomTab({ s, set }) {
           ))}
         </div>
       </Mission>
-      <Mission title="The Alchemist" points={20} color={C.wisdom}>
+      <Mission title="The Alchemist" points={20} earned={s.alchemist ? 20 : 0} color={C.wisdom}>
         <label className="flex items-center gap-1">
           <Check2 checked={s.alchemist} color={C.wisdom} onClick={() => set((d) => { d.wisdom.alchemist = !d.wisdom.alchemist; })} />
           <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>Finished the book</span>
@@ -551,7 +718,7 @@ function MuayThaiGrid({ value, onToggle, color }) {
         const open = openWeeks[wi];
         return (
           <div key={wi} style={{ background: C.containerHigh, borderRadius: 12 }} className="overflow-hidden">
-            <Touchable onClick={() => toggleWeek(wi)} rippleColor="rgba(255,255,255,0.06)" style={{ display: "block" }}>
+            <Touchable onClick={() => toggleWeek(wi)} style={{ display: "block" }}>
               <div className="flex items-center justify-between px-3 py-2.5">
                 <span style={{ fontFamily: mono, fontSize: 11, color: C.onSurfaceVariant }}>
                   Week {wi + 1} <span style={{ color: C.faint }}>({weekRange(wi + 1)})</span>
@@ -609,7 +776,14 @@ function LockWrap({ locked, color, children }) {
   if (!locked) return <>{children}</>;
   return (
     <div>
-      <div style={{ background: C.container, borderLeft: `4px solid ${color}` }} className="rounded-2xl p-4 mx-4 mb-3 flex items-center gap-3">
+      <div style={{ position: "relative", background: C.container, borderRadius: 16, overflow: "hidden" }} className="p-4 mx-4 mb-3 flex items-center gap-3">
+        <div
+          style={{
+            position: "absolute", left: 0, top: "22%", bottom: "22%", width: 3, borderRadius: 3,
+            background: `linear-gradient(180deg, transparent, ${color}, transparent)`,
+            boxShadow: `0 0 8px ${mix(color, 60)}`,
+          }}
+        />
         <Lock size={18} color={color} />
         <div>
           <div style={{ fontFamily: sans, fontWeight: 500, color: C.onSurface, fontSize: 14 }}>Locked until the quest starts</div>
@@ -627,7 +801,7 @@ function VitalityTab({ s, set, locked }) {
     <div className="pb-4">
       <ScreenHeader title="Vitality" sub="Physical strength, endurance and health." color={C.vitality} score={score} />
       <LockWrap locked={locked} color={C.vitality}>
-        <Mission title="Muay Thai" points={65} color={C.vitality}>
+        <Mission title="Muay Thai" points={65} earned={Object.values(s.muayThai).filter(Boolean).length} color={C.vitality}>
           <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 10 }}>
             Weekday classes, 3 Aug – 30 Oct.{" "}
             <span style={{ fontFamily: mono, color: C.vitality }}>
@@ -636,13 +810,23 @@ function VitalityTab({ s, set, locked }) {
           </p>
           <MuayThaiGrid value={s.muayThai} color={C.vitality} onToggle={(ds) => set((d) => { d.vitality.muayThai[ds] = !d.vitality.muayThai[ds]; })} />
         </Mission>
-        <Mission title="Arm Training" points={13} color={C.vitality}>
+        <Mission
+          title="Arm Training"
+          points={13}
+          earned={Object.entries(s.armWeeks).reduce((sum, [i, week]) => sum + week.filter(Boolean).length * (Number(i) < 4 ? 1 : 0.5), 0)}
+          color={C.vitality}
+        >
           <WeekSessionGrid weeks={s.armWeeks} color={C.vitality} onToggle={(wi, si) => set((d) => { d.vitality.armWeeks[wi][si] = !d.vitality.armWeeks[wi][si]; })} />
         </Mission>
-        <Mission title="Ab Training" points={13} color={C.vitality}>
+        <Mission
+          title="Ab Training"
+          points={13}
+          earned={Object.entries(s.abWeeks).reduce((sum, [i, week]) => sum + week.filter(Boolean).length * (Number(i) < 4 ? 1 : 0.5), 0)}
+          color={C.vitality}
+        >
           <WeekSessionGrid weeks={s.abWeeks} color={C.vitality} onToggle={(wi, si) => set((d) => { d.vitality.abWeeks[wi][si] = !d.vitality.abWeeks[wi][si]; })} />
         </Mission>
-        <Mission title="Treks" points={9} color={C.vitality}>
+        <Mission title="Treks" points={9} earned={s.treks} color={C.vitality}>
           <div className="flex items-center gap-2">
             <Mountain size={16} color={C.vitality} />
             <Counter value={s.treks} max={9} color={C.vitality} onChange={(v) => set((d) => { d.vitality.treks = v; })} />
@@ -657,13 +841,14 @@ function VitalityTab({ s, set, locked }) {
    WEALTH TAB
 --------------------------------------------------------------- */
 function WealthTab({ s, set, locked }) {
+  const readOnly = useContext(ReadOnlyContext);
   const score = wealthScore(s);
   const months = ["August", "September", "October"];
   return (
     <div className="pb-4">
       <ScreenHeader title="Wealth" sub="Financial discipline through investing and saving." color={C.wealth} score={score} />
       <LockWrap locked={locked} color={C.wealth}>
-        <Mission title="Invest — ₹50,000 / month" points={60} color={C.wealth}>
+        <Mission title="Invest — ₹50,000 / month" points={60} earned={s.invest.filter(Boolean).length * 20} color={C.wealth}>
           <div className="flex flex-col">
             {months.map((m, i) => (
               <label key={m} className="flex items-center gap-1">
@@ -673,7 +858,12 @@ function WealthTab({ s, set, locked }) {
             ))}
           </div>
         </Mission>
-        <Mission title="Save — ₹15,000 / month" points={40} color={C.wealth}>
+        <Mission
+          title="Save — ₹15,000 / month"
+          points={40}
+          earned={s.save.reduce((sum, a) => sum + savePoints(a), 0) + (s.save.every((a) => a >= 15000) ? 4 : 0)}
+          color={C.wealth}
+        >
           <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 10 }}>
             Up to 12 pts/month; −1 per ₹1,000 short. +4 bonus for all three months.
           </p>
@@ -684,13 +874,15 @@ function WealthTab({ s, set, locked }) {
                 <input
                   type="number"
                   value={s.save[i]}
+                  disabled={readOnly}
                   onChange={(e) => {
                     const v = clamp(Number(e.target.value) || 0, 0, 15000);
                     set((d) => { d.wealth.save[i] = v; });
                   }}
                   style={{
-                    background: C.containerHigh, border: "none", color: C.onSurface,
+                    background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, color: C.onSurface,
                     fontFamily: mono, fontSize: 13, borderRadius: 10, padding: "8px 10px", width: 96,
+                    opacity: readOnly ? 0.7 : 1,
                   }}
                 />
                 <span style={{ fontFamily: mono, fontSize: 12, color: C.wealth }}>{savePoints(s.save[i])} pts</span>
@@ -741,11 +933,17 @@ function ResolveTab({ s, set, locked }) {
   ];
   const totalDeduction = allowanceItems.reduce((sum, [k, , allow]) => sum + Math.max(0, s[k] - allow), 0);
 
+  const dailyEarned = Object.values(s.dailyLogs).reduce(
+    (sum, l) => sum + (l.wake ? 0.2 : 0) + (l.plan ? 0.2 : 0) + (l.hair ? 0.2 : 0) + (l.teeth ? 0.2 : 0),
+    0
+  );
+  const weeklyEarned = Object.values(s.weeklyLogs).reduce((sum, w) => sum + (w.laundry ? 1 : 0) + (w.iron ? 1 : 0), 0);
+
   return (
     <div className="pb-4">
       <ScreenHeader title="Resolve" sub="Consistency, discipline and self-control." color={C.resolve} score={score} />
       <LockWrap locked={locked} color={C.resolve}>
-        <Mission title="Daily Missions" points={72.8} color={C.resolve} defaultOpen>
+        <Mission title="Daily Missions" points={72.8} earned={dailyEarned} color={C.resolve} defaultOpen>
           <div className="flex items-center justify-between mb-3">
             <Touchable onClick={() => shiftDay(-1)} style={{ color: C.onSurfaceVariant, width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <ChevronLeft size={18} />
@@ -777,7 +975,7 @@ function ResolveTab({ s, set, locked }) {
           </div>
         </Mission>
 
-        <Mission title="Weekly Missions" points={26} color={C.resolve}>
+        <Mission title="Weekly Missions" points={26} earned={weeklyEarned} color={C.resolve}>
           <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 6 }}>
             Week {weekNum} <span style={{ color: C.faint }}>({weekRange(weekNum)})</span>
           </p>
@@ -805,7 +1003,7 @@ function ResolveTab({ s, set, locked }) {
           </label>
         </Mission>
 
-        <Mission title="Bedsheets" points={1.2} color={C.resolve}>
+        <Mission title="Bedsheets" points={1.2} earned={s.bedsheets * 0.4} color={C.resolve}>
           <Counter value={s.bedsheets} max={3} color={C.resolve} onChange={(v) => set((d) => { d.resolve.bedsheets = v; })} />
         </Mission>
 
@@ -855,21 +1053,21 @@ function AchievementsTab({ state, overall }) {
     { key: "vitality", label: "Vitality", color: C.vitality },
     { key: "wealth", label: "Wealth", color: C.wealth },
     { key: "resolve", label: "Resolve", color: C.resolve },
-    { key: "overall", label: "Overall", color: C.onSurface },
+    { key: "overall", label: "Overall", color: C.accent },
   ];
   return (
     <div className="pb-4">
       <ScreenHeader
         title="Achievements"
         sub={`${unlockedIds.size} of ${ACHIEVEMENTS.length} unlocked`}
-        color={C.wealth}
+        color={C.accent}
         score={(unlockedIds.size / ACHIEVEMENTS.length) * 100}
       />
       {groups.map((g) => {
         const items = ACHIEVEMENTS.filter((a) => a.attr === g.key);
         return (
           <div key={g.key} className="mb-2">
-            <h3 style={{ fontFamily: sans, fontWeight: 500, color: g.color, fontSize: 13, margin: "4px 20px 8px" }}>{g.label}</h3>
+            <h3 style={{ fontFamily: sans, fontWeight: 700, color: g.color, fontSize: 12.5, margin: "4px 20px 8px", letterSpacing: 0.6 }}>{g.label.toUpperCase()}</h3>
             <div className="px-4 flex flex-col gap-2 mb-3">
               {items.map((a) => {
                 const unlocked = unlockedIds.has(a.id);
@@ -877,12 +1075,17 @@ function AchievementsTab({ state, overall }) {
                 return (
                   <div
                     key={a.id}
-                    style={{ background: unlocked ? C.container : C.surfaceLow, opacity: unlocked ? 1 : 0.55, borderRadius: 16 }}
+                    style={{
+                      background: unlocked ? `linear-gradient(120deg, var(--container-high), var(--container))` : C.surfaceLow,
+                      opacity: unlocked ? 1 : 0.55, borderRadius: 14,
+                      border: unlocked ? `1px solid ${mix(g.color, 27)}` : `1px solid ${C.outlineVariant}`,
+                      boxShadow: unlocked ? `0 0 12px ${mix(g.color, 13)}` : "none",
+                    }}
                     className="p-3.5 flex items-center gap-3"
                   >
-                    <div style={{ width: 34, height: 34, borderRadius: "50%", flexShrink: 0, background: unlocked ? g.color : C.containerHigh, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <Icon size={15} color={unlocked ? C.surface : C.faint} />
-                    </div>
+                    <Hex size={36} color={g.color} glow={unlocked}>
+                      <Icon size={18} color={unlocked ? g.color : C.faint} />
+                    </Hex>
                     <div>
                       <div style={{ fontFamily: sans, fontWeight: 500, color: unlocked ? C.onSurface : C.onSurfaceVariant, fontSize: 13.5 }}>{a.label}</div>
                       <p style={{ color: C.faint, fontSize: 11.5 }}>{a.desc}</p>
@@ -899,7 +1102,7 @@ function AchievementsTab({ state, overall }) {
 }
 
 /* ---------------------------------------------------------------
-   TODAY'S QUESTS — Material checklist card
+   TODAY'S QUESTS — HUD checklist card
 --------------------------------------------------------------- */
 function TodayQuests({ state, set, today }) {
   const idx = dayIndex(today);
@@ -935,9 +1138,12 @@ function TodayQuests({ state, set, today }) {
     dailyItems.length + weeklyItems.length + armPending.length + abPending.length + (mtPending ? 1 : 0);
 
   return (
-    <div style={{ background: C.container, borderRadius: 20 }} className="mx-4 p-4 mb-4">
+    <div style={{ background: `linear-gradient(120deg, var(--container-high), var(--container))`, borderRadius: 18, border: `1px solid ${C.outlineVariant}` }} className="mx-4 p-4 mb-4">
       <div className="flex items-center justify-between mb-2">
-        <h3 style={{ fontFamily: sans, fontWeight: 500, color: C.onSurface, fontSize: 15.5 }}>Today's Quests</h3>
+        <div className="flex items-center gap-2">
+          <Sparkles size={14} color={C.accent} />
+          <h3 style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 14.5, letterSpacing: 0.3 }}>TODAY'S QUESTS</h3>
+        </div>
         <span style={{ fontFamily: mono, color: C.faint, fontSize: 10.5 }}>Day {idx} · Wk {weekNum}</span>
       </div>
       {totalPending === 0 ? (
@@ -1009,11 +1215,28 @@ function TodayQuests({ state, set, today }) {
 }
 
 /* ---------------------------------------------------------------
+   THEME TOGGLE — small sun/moon pill, used in the top bar & code gate
+--------------------------------------------------------------- */
+function ThemeToggle({ mode, onToggle }) {
+  return (
+    <Touchable
+      onClick={onToggle}
+      style={{
+        width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+        background: C.containerHigh, border: `1px solid ${C.outlineVariant}`,
+      }}
+    >
+      {mode === "dark" ? <Moon size={15} color={C.accent} /> : <Sun size={15} color={C.accent} />}
+    </Touchable>
+  );
+}
+
+/* ---------------------------------------------------------------
    SECRET CODE GATE — shown before any data loads
 --------------------------------------------------------------- */
-function CodeGate({ onSubmit }) {
+function CodeGate({ onSubmit, mode, onToggleTheme }) {
   const [value, setValue] = useState("");
-  const [mode, setMode] = useState("enter"); // "enter" | "create"
+  const [formMode, setFormMode] = useState("enter"); // "enter" | "create"
 
   const submit = () => {
     const clean = sanitizeCode(value);
@@ -1024,25 +1247,34 @@ function CodeGate({ onSubmit }) {
   return (
     <div
       style={{
-        background: C.surface, fontFamily: sans, maxWidth: 420, margin: "0 auto",
+        background: `radial-gradient(circle at 80% -10%, ${C.glow}, transparent 55%), var(--surface)`,
+        fontFamily: sans, maxWidth: 420, margin: "0 auto",
         height: 780, borderRadius: 14, overflow: "hidden",
         display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-        boxShadow: "0 12px 32px rgba(0,0,0,0.45)", border: `1px solid ${C.outlineVariant}`,
-        padding: 32,
+        boxShadow: "var(--shell-shadow)", border: `1px solid ${C.outlineVariant}`,
+        padding: 32, position: "relative",
       }}
     >
       <style>{FONT_IMPORT}</style>
-      <div style={{ width: 56, height: 56, borderRadius: 18, background: `${C.wealth}26`, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 18 }}>
-        <KeyRound size={24} color={C.wealth} />
+      <div style={{ position: "absolute", top: 16, right: 16 }}>
+        <ThemeToggle mode={mode} onToggle={onToggleTheme} />
       </div>
-      <div style={{ fontFamily: sans, fontWeight: 700, fontSize: 20, color: C.onSurface, marginBottom: 6, textAlign: "center" }}>
-        {mode === "enter" ? "Enter your secret code" : "Choose a secret code"}
+      <Hex size={64} color={C.accent} glow>
+        <KeyRound size={30} color={C.accent} />
+      </Hex>
+      <div style={{ fontFamily: sans, fontWeight: 900, fontSize: 20, color: C.onSurface, margin: "18px 0 6px", textAlign: "center" }}>
+        {formMode === "enter" ? "Enter your secret code" : "Choose a secret code"}
       </div>
       <p style={{ color: C.onSurfaceVariant, fontSize: 13, textAlign: "center", marginBottom: 22, lineHeight: 1.5 }}>
-        {mode === "enter"
+        {formMode === "enter"
           ? "Type the code you use on your other device to load your quest data."
           : "Pick a long, unguessable code — this is what protects your data. Enter the same code on any device to sync."}
       </p>
+      {formMode === "enter" && (
+        <p style={{ color: C.faint, fontSize: 11.5, textAlign: "center", marginTop: -14, marginBottom: 18, lineHeight: 1.4 }}>
+          Want to just look, not edit? Enter <span style={{ fontFamily: mono, color: C.onSurfaceVariant }}>read</span> for view-only access.
+        </p>
+      )}
       <input
         autoFocus
         value={value}
@@ -1056,21 +1288,20 @@ function CodeGate({ onSubmit }) {
       />
       <Touchable
         onClick={submit}
-        rippleColor="rgba(0,0,0,0.15)"
         style={{
-          width: "100%", background: C.wealth, color: C.surface, borderRadius: 16, padding: "13px 0",
+          width: "100%", background: C.accent, color: "#fff", borderRadius: 16, padding: "13px 0",
           display: "flex", alignItems: "center", justifyContent: "center", fontFamily: sans, fontWeight: 700, fontSize: 14.5,
+          boxShadow: `0 0 18px ${C.glow}`,
         }}
       >
         Continue
       </Touchable>
       <Touchable
-        onClick={() => setMode((m) => (m === "enter" ? "create" : "enter"))}
-        rippleColor="rgba(255,255,255,0.08)"
+        onClick={() => setFormMode((m) => (m === "enter" ? "create" : "enter"))}
         style={{ marginTop: 16, padding: "6px 10px", borderRadius: 10 }}
       >
         <span style={{ color: C.onSurfaceVariant, fontSize: 12.5 }}>
-          {mode === "enter" ? "First time? Create a new code" : "Already have a code? Enter it"}
+          {formMode === "enter" ? "First time? Create a new code" : "Already have a code? Enter it"}
         </span>
       </Touchable>
     </div>
@@ -1080,9 +1311,104 @@ function CodeGate({ onSubmit }) {
 /* ---------------------------------------------------------------
    TOP APP BAR
 --------------------------------------------------------------- */
-function ProfileHeader({ name, onNameChange, overall, today, testMode, onToggleTest }) {
+/* Rank badge — pure typography: a small tracked "RANK" caption sitting
+   above a large, heavy rank letter, tinted with the current rank's color.
+   Tapping it opens a small popover with the rank color and XP details;
+   it closes on any click outside. */
+function RankBadge({ rank, color, xp, bandFrom, bandTo, mode }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const elite = RANK_BANDS.findIndex((b) => b.rank === rank) >= RANK_BANDS.length - 2;
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} style={{ position: "relative", flexShrink: 0 }}>
+      <Touchable onClick={() => setOpen((o) => !o)} rippleColor={`${mix(color, 20)}`} style={{ borderRadius: 10, padding: "0 2px" }}>
+        <div className="flex flex-col items-center">
+          <span style={{ fontFamily: mono, fontSize: 9, fontWeight: 700, color: C.faint, letterSpacing: 2 }}>RANK</span>
+          <span
+            style={{
+              fontFamily: sans, fontWeight: 900, lineHeight: 1,
+              fontSize: rank.length > 1 ? 34 : 40,
+              color,
+              letterSpacing: 0.5,
+              textShadow: elite ? `0 0 18px ${mix(color, 60)}, 0 0 36px ${mix(color, 33)}` : `0 0 10px ${mix(color, 27)}`,
+            }}
+          >
+            {rank}
+          </span>
+        </div>
+      </Touchable>
+
+      {open && (
+        <div
+          style={{
+            position: "absolute", top: "calc(100% + 10px)", left: 0,
+            zIndex: 40, minWidth: 196, background: C.containerHighest, border: `1px solid ${mix(color, 33)}`,
+            borderRadius: 14, padding: "12px 14px", boxShadow: "0 12px 28px rgba(0,0,0,0.4)",
+          }}
+        >
+          <div className="flex items-center gap-2" style={{ marginBottom: 8 }}>
+            <div style={{ width: 12, height: 12, borderRadius: "50%", background: color, boxShadow: `0 0 8px ${color}` }} />
+            <span style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 13.5 }}>Rank {rank}</span>
+          </div>
+          <div className="flex justify-between" style={{ marginBottom: 3 }}>
+            <span style={{ fontFamily: mono, fontSize: 10.5, color: C.onSurfaceVariant }}>Total XP</span>
+            <span style={{ fontFamily: mono, fontSize: 10.5, color: C.onSurface }}>{Math.round(xp)} / 400</span>
+          </div>
+          <div className="flex justify-between" style={{ marginBottom: 3 }}>
+            <span style={{ fontFamily: mono, fontSize: 10.5, color: C.onSurfaceVariant }}>Rank band</span>
+            <span style={{ fontFamily: mono, fontSize: 10.5, color: C.onSurface }}>{bandFrom}–{bandTo}</span>
+          </div>
+          <div style={{ height: 1, background: C.outlineVariant, margin: "6px 0" }} />
+          <span style={{ fontFamily: mono, fontSize: 10.5, color }}>
+            {rank === "SS" ? "Top rank reached" : `${Math.round(xp - bandFrom)}/${bandTo - bandFrom} to next rank`}
+          </span>
+          <div style={{ height: 1, background: C.outlineVariant, margin: "10px 0 8px" }} />
+          <span style={{ fontFamily: mono, fontSize: 9, color: C.faint, letterSpacing: 1, display: "block", marginBottom: 6 }}>ALL RANKS</span>
+          <div className="flex flex-col gap-1.5">
+            {RANK_BANDS.map((b) => {
+              const bc = rankColor(b.rank, mode);
+              const isCurrent = b.rank === rank;
+              return (
+                <div
+                  key={b.rank}
+                  className="flex items-center gap-2"
+                  style={{
+                    padding: "3px 6px", borderRadius: 8,
+                    background: isCurrent ? `${mix(bc, 12)}` : "transparent",
+                  }}
+                >
+                  <div style={{ width: 9, height: 9, borderRadius: "50%", background: bc, flexShrink: 0, boxShadow: isCurrent ? `0 0 6px ${bc}` : "none" }} />
+                  <span style={{ fontFamily: sans, fontWeight: isCurrent ? 800 : 500, fontSize: 11.5, color: isCurrent ? bc : C.onSurfaceVariant, width: 20 }}>
+                    {b.rank}
+                  </span>
+                  <span style={{ fontFamily: mono, fontSize: 10, color: isCurrent ? C.onSurface : C.faint, marginLeft: "auto" }}>
+                    {b.from}–{b.to}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LevelCard({ name, onNameChange, overall, totalXP, today, mode }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name);
+  const { rank, progress, bandFrom, bandTo, xp } = rankInfo(totalXP);
+  const rc = rankColor(rank, mode);
 
   useEffect(() => {
     if (!editing) setDraft(name);
@@ -1096,55 +1422,80 @@ function ProfileHeader({ name, onNameChange, overall, today, testMode, onToggleT
   const dateStr = today.toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
 
   return (
-    <div className="flex items-center gap-3 px-4 pt-1 pb-3" style={{ flexShrink: 0 }}>
-      <Ring value={overall} max={100} color={C.wealth} size={62} stroke={5}>
-        <span style={{ fontFamily: mono, fontSize: 15, fontWeight: 700, color: C.onSurface }}>{Math.round(overall)}</span>
-      </Ring>
-      <div className="flex-1 min-w-0">
-        {editing ? (
-          <input
-            autoFocus
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commit();
-              if (e.key === "Escape") { setDraft(name); setEditing(false); }
-            }}
-            placeholder="Your name"
-            style={{
-              fontFamily: sans, fontWeight: 700, fontSize: 17, color: C.onSurface,
-              background: "transparent", border: "none", borderBottom: `1px solid ${C.outline}`,
-              outline: "none", width: "100%", padding: "2px 0",
-            }}
-          />
-        ) : (
-          <Touchable onClick={() => setEditing(true)} rippleColor="rgba(255,255,255,0.08)" style={{ display: "inline-block", borderRadius: 8 }}>
-            <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 17, color: name ? C.onSurface : C.faint }}>
-              {name || "Tap to set your name"}
-            </span>
-          </Touchable>
-        )}
-        <div style={{ fontFamily: mono, fontSize: 11.5, color: C.onSurfaceVariant, marginTop: 2 }}>{dateStr}</div>
+    <div
+      className="mx-4 mb-1"
+      style={{
+        position: "relative",
+        background: `linear-gradient(160deg, var(--container-high) 0%, var(--container) 65%)`,
+        border: `1px solid ${mix(rc, 25)}`,
+        borderRadius: 20,
+        boxShadow: `inset 0 1px 0 ${mix(rc, 13)}, 0 1px 0 ${C.outlineVariant}`,
+        transition: "border-color 0.3s ease, box-shadow 0.3s ease",
+      }}
+    >
+      {/* decorative accents live in their own clipped layer so the rank
+          popover (a sibling below) can overflow the card without being cut off */}
+      <div style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 20, pointerEvents: "none" }}>
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: `linear-gradient(90deg, transparent, ${rc}, transparent)`, opacity: 0.7 }} />
+        <div style={{ position: "absolute", top: -50, right: -40, width: 160, height: 160, borderRadius: "50%", background: `radial-gradient(circle, ${mix(rc, 20)}, transparent 72%)` }} />
       </div>
-      <Touchable
-        onClick={onToggleTest}
-        rippleColor="rgba(255,255,255,0.15)"
-        style={{
-          flexShrink: 0, display: "flex", alignItems: "center", gap: 5,
-          background: testMode ? C.wealth : C.containerHigh,
-          color: testMode ? C.surface : C.onSurfaceVariant,
-          borderRadius: 14, padding: "7px 10px",
-        }}
-      >
-        {testMode ? <Unlock size={13} /> : <Lock size={13} />}
-        <span style={{ fontFamily: sans, fontWeight: 600, fontSize: 10 }}>{testMode ? "Unlocked" : "Test mode"}</span>
-      </Touchable>
+      <div className="flex items-end gap-3" style={{ position: "relative", padding: 16 }}>
+        <div className="flex-1 min-w-0">
+          {editing ? (
+            <input
+              autoFocus
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={commit}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commit();
+                if (e.key === "Escape") { setDraft(name); setEditing(false); }
+              }}
+              placeholder="Your Name"
+              style={{
+                fontFamily: sans, fontWeight: 900, fontSize: 16, color: C.onSurface,
+                background: "transparent", border: "none", borderBottom: `1px solid ${C.outline}`,
+                outline: "none", width: "100%", padding: "1px 0",
+              }}
+            />
+          ) : (
+            <Touchable onClick={() => setEditing(true)} writeAction style={{ display: "inline-block", borderRadius: 8 }}>
+              <span style={{ fontFamily: sans, fontWeight: 900, fontSize: 16, color: name ? C.onSurface : C.faint, letterSpacing: 0.3 }}>
+                {(name || "Your Name").toUpperCase()}
+              </span>
+            </Touchable>
+          )}
+
+          <div className="flex items-end gap-3" style={{ marginTop: 8 }}>
+            <RankBadge rank={rank} color={rc} xp={xp} bandFrom={bandFrom} bandTo={bandTo} mode={mode} />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5">
+                <Calendar size={11} color={C.onSurfaceVariant} />
+                <span style={{ fontFamily: mono, fontSize: 11, color: C.onSurfaceVariant }}>{dateStr}</span>
+              </div>
+              <div style={{ height: 5, background: C.outlineVariant, borderRadius: 3, marginTop: 8, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${progress * 100}%`, background: rc, boxShadow: `0 0 6px ${mix(rc, 60)}`, borderRadius: 3, transition: "width 0.4s ease, background 0.3s ease" }} />
+              </div>
+              <span style={{ fontFamily: mono, fontSize: 9.5, color: C.faint }}>
+                {rank === "SS" ? "Top rank reached" : `${Math.round(totalXP - bandFrom)}/${bandTo - bandFrom} XP to next rank`}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div style={{ flexShrink: 0 }}>
+          <Ring value={overall} max={100} color={rc} size={72} stroke={5} glow>
+            <div className="flex flex-col items-center leading-none">
+              <span style={{ fontFamily: sans, fontSize: 19, fontWeight: 900, color: C.onSurface }}>{Math.round(overall)}</span>
+              <span style={{ fontFamily: mono, fontSize: 7.5, color: C.faint, letterSpacing: 0.5 }}>/ 100</span>
+            </div>
+          </Ring>
+        </div>
+      </div>
     </div>
   );
 }
 
-function TopAppBar({ syncStatus, onMenu }) {
+function TopAppBar({ syncStatus, onMenu, mode, onToggleTheme, readOnly }) {
   const statusIcon =
     syncStatus === "saving" ? <Loader2 size={16} color={C.onSurfaceVariant} className="md-spin" /> :
     syncStatus === "error" ? <CloudOff size={16} color={C.danger} /> :
@@ -1155,15 +1506,29 @@ function TopAppBar({ syncStatus, onMenu }) {
   return (
     <div className="flex items-center justify-between px-3" style={{ height: 60, flexShrink: 0 }}>
       <div className="flex items-center gap-1.5 pl-1.5">
-        <div style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 18 }}>+U  -  Lv 1</div>
+        <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 16, letterSpacing: 0.5 }}>QUEST LOG</div>
+        {readOnly && (
+          <span
+            style={{
+              fontFamily: sans, fontWeight: 700, fontSize: 9.5, letterSpacing: 0.5,
+              color: C.wealth, background: mix(C.wealth, 18), borderRadius: 8, padding: "3px 7px",
+              display: "flex", alignItems: "center", gap: 3,
+            }}
+          >
+            <Lock size={9} /> VIEW ONLY
+          </span>
+        )}
       </div>
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-1">
-          {statusIcon}
-          <span style={{ fontFamily: mono, fontSize: 10.5, color: C.onSurfaceVariant }}>{statusLabel}</span>
-        </div>
-        <Touchable onClick={onMenu} style={{ width: 40, height: 40, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }} rippleColor="rgba(255,255,255,0.12)">
-          <MoreVertical size={19} color={C.onSurfaceVariant} />
+      <div className="flex items-center gap-2">
+        {!readOnly && (
+          <div className="flex items-center gap-1">
+            {statusIcon}
+            <span style={{ fontFamily: mono, fontSize: 10.5, color: C.onSurfaceVariant }}>{statusLabel}</span>
+          </div>
+        )}
+        <ThemeToggle mode={mode} onToggle={onToggleTheme} />
+        <Touchable onClick={onMenu} style={{ width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <MoreVertical size={18} color={C.onSurfaceVariant} />
         </Touchable>
       </div>
     </div>
@@ -1171,37 +1536,46 @@ function TopAppBar({ syncStatus, onMenu }) {
 }
 
 /* ---------------------------------------------------------------
-   BOTTOM NAVIGATION — Material 3 NavigationBar
+   BOTTOM NAVIGATION — HUD nav bar with glow underline on active tab
 --------------------------------------------------------------- */
 function BottomNav({ tab, setTab, tabs }) {
   return (
-    <div
-      style={{ height: NAV_H, background: C.surfaceLow, borderTop: `1px solid ${C.outlineVariant}`, flexShrink: 0 }}
-      className="flex items-stretch"
-    >
-      {tabs.map((t) => {
-        const active = tab === t.id;
-        const Icon = t.icon;
-        return (
-          <Touchable key={t.id} onClick={() => setTab(t.id)} rippleColor={`${t.color}33`} style={{ flex: 1, display: "flex" }}>
-            <div className="w-full flex flex-col items-center justify-center gap-0.5">
-              <div
-                style={{
-                  padding: "3px 16px", borderRadius: 14,
-                  background: active ? `${t.color}2E` : "transparent",
-                  transition: "background 0.15s ease",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                }}
-              >
-                <Icon size={19} color={active ? t.color : C.onSurfaceVariant} />
+    <div style={{ flexShrink: 0, padding: "0 12px 12px", background: C.surface }}>
+      <div
+        style={{
+          height: NAV_H - 12, borderRadius: 22,
+          background: C.containerHigh,
+          border: `1px solid ${C.outlineVariant}`,
+          boxShadow: "0 8px 22px rgba(0,0,0,0.28)",
+        }}
+        className="flex items-stretch"
+      >
+        {tabs.map((t) => {
+          const active = tab === t.id;
+          const Icon = t.icon;
+          return (
+            <Touchable key={t.id} onClick={() => setTab(t.id)} rippleColor={`${mix(t.color, 20)}`} style={{ flex: 1, display: "flex" }}>
+              <div className="w-full flex flex-col items-center justify-center gap-0.5">
+                <div
+                  style={{
+                    padding: "3px 16px", borderRadius: 14,
+                    background: active ? `${mix(t.color, 13)}` : "transparent",
+                    boxShadow: active ? `0 0 10px ${mix(t.color, 27)}` : "none",
+                    transition: "background 0.15s ease",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}
+                >
+                  <Icon size={19} color={active ? t.color : C.onSurfaceVariant} />
+                </div>
+                <span style={{ fontFamily: sans, fontSize: 10, fontWeight: active ? 700 : 500, color: active ? t.color : C.faint }}>
+                  {t.label}
+                </span>
+                <div style={{ width: active ? 16 : 0, height: 2, borderRadius: 2, background: t.color, boxShadow: active ? `0 0 6px ${t.color}` : "none", transition: "width 0.15s ease" }} />
               </div>
-              <span style={{ fontFamily: sans, fontSize: 10, fontWeight: active ? 700 : 500, color: active ? t.color : C.faint }}>
-                {t.label}
-              </span>
-            </div>
-          </Touchable>
-        );
-      })}
+            </Touchable>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1213,6 +1587,9 @@ export default function LifeRPG() {
   const [code, setCode] = useState(() =>
     typeof window !== "undefined" ? localStorage.getItem(CODE_STORAGE_KEY) : null
   );
+  const [mode, setMode] = useState(() =>
+    (typeof window !== "undefined" && localStorage.getItem(THEME_STORAGE_KEY)) || "dark"
+  );
   const [state, setState] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("dashboard");
@@ -1220,45 +1597,110 @@ export default function LifeRPG() {
   const [syncStatus, setSyncStatus] = useState("synced");
   const [resetArm, setResetArm] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [testMode, setTestMode] = useState(true);
   const [codeCopied, setCodeCopied] = useState(false);
+  const [readOnly, setReadOnly] = useState(false);
+  const [dataCode, setDataCode] = useState(null); // the actual Firestore doc id backing what's on screen
+  const [noOwnerYet, setNoOwnerYet] = useState(false); // "read" entered before any real quest exists
 
   const dirtyRef = useRef(false);
   useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
 
+  const toggleTheme = useCallback(() => {
+    setMode((m) => {
+      const next = m === "dark" ? "light" : "dark";
+      if (typeof window !== "undefined") localStorage.setItem(THEME_STORAGE_KEY, next);
+      return next;
+    });
+  }, []);
+
   // Subscribe to the Firestore document for this code as soon as we have one.
+  // A code of "read" is special: it never owns its own document. Instead we
+  // look up the real owner's code from a small pointer doc and subscribe to
+  // THAT document, read-only (no writes, no auto-creation).
   useEffect(() => {
     if (!code) return;
     setLoaded(false);
-    const ref = doc(db, QUESTS_COLLECTION, code);
-    const unsub = onSnapshot(
-      ref,
-      async (snap) => {
-        if (snap.exists()) {
-          if (!dirtyRef.current) {
-            setState(migrateState(snap.data()));
+    setNoOwnerYet(false);
+    let unsub = null;
+    let cancelled = false;
+
+    (async () => {
+      const isReadOnly = code.trim().toLowerCase() === READ_ONLY_CODE;
+      let targetCode = code;
+
+      if (isReadOnly) {
+        try {
+          const ptrSnap = await getDoc(doc(db, QUESTS_COLLECTION, OWNER_POINTER_DOC));
+          if (ptrSnap.exists() && ptrSnap.data()?.ownerCode) {
+            targetCode = ptrSnap.data().ownerCode;
+          } else {
+            if (!cancelled) {
+              setReadOnly(true);
+              setDataCode(null);
+              setNoOwnerYet(true);
+              setLoaded(true);
+              setSyncStatus("synced");
+            }
+            return;
           }
-        } else {
-          const initial = defaultState();
-          try {
-            await setDoc(ref, initial);
-          } catch {
-            // ignore — will retry on next write
+        } catch {
+          if (!cancelled) {
+            setReadOnly(true);
+            setSyncStatus("error");
+            setLoaded(true);
           }
-          setState(initial);
+          return;
         }
-        setLoaded(true);
-        setSyncStatus("synced");
-      },
-      () => {
-        setSyncStatus("error");
-        setLoaded(true);
       }
-    );
-    return () => unsub();
+
+      if (cancelled) return;
+      setReadOnly(isReadOnly);
+      setDataCode(targetCode);
+
+      const ref = doc(db, QUESTS_COLLECTION, targetCode);
+      unsub = onSnapshot(
+        ref,
+        async (snap) => {
+          if (snap.exists()) {
+            if (!dirtyRef.current) {
+              setState(migrateState(snap.data()));
+            }
+          } else if (!isReadOnly) {
+            const initial = defaultState();
+            try {
+              await setDoc(ref, initial);
+              await setDoc(doc(db, QUESTS_COLLECTION, OWNER_POINTER_DOC), { ownerCode: targetCode }, { merge: true });
+            } catch {
+              // ignore — will retry on next write
+            }
+            setState(initial);
+          } else {
+            setState(defaultState());
+          }
+          setLoaded(true);
+          setSyncStatus("synced");
+        },
+        () => {
+          setSyncStatus("error");
+          setLoaded(true);
+        }
+      );
+
+      // Full-access sign-ins keep the owner pointer fresh so "read" always
+      // resolves to the current real code, even if it changes later.
+      if (!isReadOnly) {
+        setDoc(doc(db, QUESTS_COLLECTION, OWNER_POINTER_DOC), { ownerCode: targetCode }, { merge: true }).catch(() => {});
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (unsub) unsub();
+    };
   }, [code]);
 
   const update = useCallback((mutator) => {
+    if (readOnly) return; // safety net — read-only sessions never write
     setState((prev) => {
       const next = JSON.parse(JSON.stringify(prev));
       mutator(next);
@@ -1266,29 +1708,30 @@ export default function LifeRPG() {
     });
     setDirty(true);
     setSyncStatus("unsaved");
-  }, []);
+  }, [readOnly]);
 
   const saveNow = useCallback(() => {
-    if (!code || !state) return;
+    if (readOnly || !dataCode || !state) return;
     setSyncStatus("saving");
-    const ref = doc(db, QUESTS_COLLECTION, code);
+    const ref = doc(db, QUESTS_COLLECTION, dataCode);
     setDoc(ref, state)
       .then(() => {
         setDirty(false);
         setSyncStatus("synced");
       })
       .catch(() => setSyncStatus("error"));
-  }, [code, state]);
+  }, [readOnly, dataCode, state]);
 
   const doReset = useCallback(() => {
+    if (readOnly) return;
     if (!resetArm) {
       setResetArm(true);
       setTimeout(() => setResetArm(false), 4000);
       return;
     }
     const initial = defaultState();
-    if (code) {
-      const ref = doc(db, QUESTS_COLLECTION, code);
+    if (dataCode) {
+      const ref = doc(db, QUESTS_COLLECTION, dataCode);
       setDoc(ref, initial).catch(() => setSyncStatus("error"));
     }
     setState(initial);
@@ -1296,7 +1739,7 @@ export default function LifeRPG() {
     setSyncStatus("synced");
     setResetArm(false);
     setMenuOpen(false);
-  }, [resetArm, code]);
+  }, [readOnly, resetArm, dataCode]);
 
   const changeCode = useCallback(() => {
     if (typeof window !== "undefined") localStorage.removeItem(CODE_STORAGE_KEY);
@@ -1305,6 +1748,8 @@ export default function LifeRPG() {
     setLoaded(false);
     setDirty(false);
     setMenuOpen(false);
+    setReadOnly(false);
+    setDataCode(null);
   }, []);
 
   const copyCode = useCallback(() => {
@@ -1319,21 +1764,57 @@ export default function LifeRPG() {
 
   if (!code) {
     return (
-      <CodeGate
-        onSubmit={(c) => {
-          if (typeof window !== "undefined") localStorage.setItem(CODE_STORAGE_KEY, c);
-          setCode(c);
-        }}
-      />
+      <div className={`theme-${mode}`}>
+        <style>{THEME_CSS}</style>
+        <CodeGate
+          mode={mode}
+          onToggleTheme={toggleTheme}
+          onSubmit={(c) => {
+            if (typeof window !== "undefined") localStorage.setItem(CODE_STORAGE_KEY, c);
+            setCode(c);
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (loaded && noOwnerYet) {
+    return (
+      <div className={`theme-${mode}`}>
+        <style>{THEME_CSS}</style>
+        <div
+          style={{
+            background: C.surface, fontFamily: sans, maxWidth: 420, margin: "0 auto",
+            height: 780, borderRadius: 28, overflow: "hidden",
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+            boxShadow: "var(--shell-shadow)", border: `1px solid ${C.outlineVariant}`, padding: 32,
+          }}
+        >
+          <style>{FONT_IMPORT}</style>
+          <Lock size={28} color={C.faint} style={{ marginBottom: 14 }} />
+          <div style={{ fontFamily: sans, fontWeight: 700, fontSize: 16, color: C.onSurface, marginBottom: 6, textAlign: "center" }}>
+            No quest yet
+          </div>
+          <p style={{ color: C.onSurfaceVariant, fontSize: 13, textAlign: "center", lineHeight: 1.5 }}>
+            The read-only code works once someone has set up their quest with their own secret code.
+          </p>
+          <Touchable onClick={changeCode} style={{ marginTop: 20, padding: "8px 14px", borderRadius: 10, border: `1px solid ${C.outline}` }}>
+            <span style={{ color: C.onSurfaceVariant, fontSize: 12.5 }}>Try a different code</span>
+          </Touchable>
+        </div>
+      </div>
     );
   }
 
   if (!loaded || !state) {
     return (
-      <div style={{ background: C.surface, color: C.onSurfaceVariant, minHeight: 400, fontFamily: sans }} className="flex items-center justify-center rounded-[28px]">
-        <style>{FONT_IMPORT}</style>
-        <Loader2 size={20} className="md-spin" style={{ marginRight: 8 }} />
-        <span style={{ fontSize: 13 }}>Loading quest…</span>
+      <div className={`theme-${mode}`}>
+        <style>{THEME_CSS}</style>
+        <div style={{ background: C.surface, color: C.onSurfaceVariant, minHeight: 400, fontFamily: sans }} className="flex items-center justify-center rounded-[28px]">
+          <style>{FONT_IMPORT}</style>
+          <Loader2 size={20} className="md-spin" style={{ marginRight: 8 }} />
+          <span style={{ fontSize: 13 }}>Loading quest…</span>
+        </div>
       </div>
     );
   }
@@ -1346,157 +1827,173 @@ export default function LifeRPG() {
   const overall = (wScore + vScore + weScore + rScore) / 4;
   const idx = clamp(dayIndex(today), 1, TOTAL_DAYS);
   const currentWeek = clamp(Math.ceil(idx / 7), 1, 13);
-  const questLocked = testMode ? false : dayIndex(today) < 1;
+  const questLocked = false;
 
   const tabs = [
-    { id: "dashboard", label: "Home", icon: Home, color: C.wealth },
+    { id: "dashboard", label: "Home", icon: Home, color: C.accent },
     { id: "wisdom", label: "Wisdom", icon: BookOpen, color: C.wisdom },
     { id: "vitality", label: "Vitality", icon: Dumbbell, color: C.vitality },
     { id: "wealth", label: "Wealth", icon: Coins, color: C.wealth },
     { id: "resolve", label: "Resolve", icon: ShieldCheck, color: C.resolve },
     { id: "achievements", label: "Awards", icon: Trophy, color: C.wisdom },
   ];
-  const activeColor = tabs.find((t) => t.id === tab)?.color || C.wealth;
+  const activeColor = tabs.find((t) => t.id === tab)?.color || C.accent;
 
   return (
-    <div
-      style={{
-        background: C.surface, fontFamily: sans, maxWidth: 420, margin: "0 auto",
-        height: "100dvh", borderRadius: 14, overflow: "hidden",
-        display: "flex", flexDirection: "column",
-        boxShadow: "0 12px 32px rgba(0,0,0,0.45)",
-        border: `1px solid ${C.outlineVariant}`,
-        position: "relative",
-      }}
-    >
-      <style>{`
-        ${FONT_IMPORT}
-        @keyframes md-ripple { to { transform: scale(1); opacity: 0; } }
-        @keyframes md-spin { to { transform: rotate(360deg); } }
-        .md-spin { animation: md-spin 0.9s linear infinite; }
-        ::-webkit-scrollbar { width: 0; height: 0; }
-      `}</style>
+    <ReadOnlyContext.Provider value={readOnly}>
+    <div className={`theme-${mode}`}>
+      <style>{THEME_CSS}</style>
+      <div
+        style={{
+          background: C.surface, fontFamily: sans, maxWidth: 420, margin: "0 auto",
+          height: "100dvh", borderRadius: 14, overflow: "hidden",
+          display: "flex", flexDirection: "column",
+          boxShadow: "var(--shell-shadow)",
+          border: `1px solid ${C.outlineVariant}`,
+          position: "relative",
+        }}
+      >
+        <style>{`
+          ${FONT_IMPORT}
+          @keyframes md-ripple { to { transform: scale(1); opacity: 0; } }
+          @keyframes md-spin { to { transform: rotate(360deg); } }
+          .md-spin { animation: md-spin 0.9s linear infinite; }
+          ::-webkit-scrollbar { width: 0; height: 0; }
+        `}</style>
 
-      <TopAppBar syncStatus={syncStatus} onMenu={() => setMenuOpen((o) => !o)} />
+        <TopAppBar syncStatus={syncStatus} onMenu={() => setMenuOpen((o) => !o)} mode={mode} onToggleTheme={toggleTheme} readOnly={readOnly} />
 
-      {/* overflow menu */}
-      {menuOpen && (
-        <>
-          <div onClick={() => { setMenuOpen(false); setResetArm(false); }} style={{ position: "absolute", inset: 0, zIndex: 10 }} />
-          <div
-            style={{
-              position: "absolute", top: 56, right: 12, zIndex: 20,
-              background: C.containerHighest, borderRadius: 16, minWidth: 220,
-              boxShadow: "0 8px 24px rgba(0,0,0,0.5)", overflow: "hidden",
-            }}
-          >
-            <Touchable onClick={copyCode} rippleColor="rgba(255,255,255,0.08)" style={{ display: "block" }}>
-              <div className="flex items-center gap-3 px-4 py-3.5">
-                <Copy size={16} color={C.onSurfaceVariant} />
-                <span style={{ fontFamily: sans, fontSize: 13.5, color: C.onSurface }}>
-                  {codeCopied ? "Copied!" : "Copy secret code"}
-                </span>
-              </div>
-            </Touchable>
-            <Touchable onClick={changeCode} rippleColor="rgba(255,255,255,0.08)" style={{ display: "block" }}>
-              <div className="flex items-center gap-3 px-4 py-3.5">
-                <KeyRound size={16} color={C.onSurfaceVariant} />
-                <span style={{ fontFamily: sans, fontSize: 13.5, color: C.onSurface }}>Change code / sign out</span>
-              </div>
-            </Touchable>
-            <Touchable onClick={doReset} rippleColor={`${C.danger}33`} style={{ display: "block" }}>
-              <div className="flex items-center gap-3 px-4 py-3.5">
-                <RotateCcw size={16} color={resetArm ? C.danger : C.onSurfaceVariant} />
-                <span style={{ fontFamily: sans, fontSize: 13.5, color: resetArm ? C.danger : C.onSurface }}>
-                  {resetArm ? "Tap again to confirm" : "Reset all data"}
-                </span>
-              </div>
-            </Touchable>
-          </div>
-        </>
-      )}
-
-      <ProfileHeader
-        name={state.profile?.name || ""}
-        onNameChange={(v) => update((d) => { d.profile.name = v; })}
-        overall={overall}
-        today={today}
-        testMode={testMode}
-        onToggleTest={() => setTestMode((t) => !t)}
-      />
-
-      <QuestStrip today={today} />
-      <div className="px-4 pb-1 flex items-center justify-between" style={{ flexShrink: 0 }}>
-        <span style={{ fontFamily: mono, color: C.faint, fontSize: 11 }}>Day {idx} / 91</span>
-        <span style={{ fontFamily: mono, color: C.faint, fontSize: 11 }}>Week {currentWeek}</span>
-      </div>
-
-      {/* scrollable content */}
-      <div className="flex-1 overflow-y-auto" style={{ position: "relative" }}>
-        {tab === "dashboard" && (
-          <div className="pb-4">
-            <div className="px-4 pt-3">
-              <Touchable
-                onClick={() => setTab("achievements")}
-                rippleColor="rgba(255,255,255,0.08)"
-                style={{ background: C.container, borderRadius: 16, display: "block", marginBottom: 14 }}
-              >
-                <div className="flex items-center gap-3 px-4 py-3">
-                  <Trophy size={16} color={C.wealth} />
-                  <span style={{ color: C.onSurfaceVariant, fontSize: 12.5 }}>
-                    <span style={{ color: C.onSurface, fontFamily: mono }}>
-                      {ACHIEVEMENTS.filter((a) => a.check(state, overall)).length} / {ACHIEVEMENTS.length}
-                    </span>{" "}
-                    achievements unlocked
+        {/* overflow menu */}
+        {menuOpen && (
+          <>
+            <div onClick={() => { setMenuOpen(false); setResetArm(false); }} style={{ position: "absolute", inset: 0, zIndex: 10 }} />
+            <div
+              style={{
+                position: "absolute", top: 56, right: 12, zIndex: 20,
+                background: C.containerHighest, borderRadius: 16, minWidth: 220,
+                border: `1px solid ${C.outlineVariant}`,
+                boxShadow: "0 8px 24px rgba(0,0,0,0.5)", overflow: "hidden",
+              }}
+            >
+              <Touchable onClick={copyCode} style={{ display: "block" }}>
+                <div className="flex items-center gap-3 px-4 py-3.5">
+                  <Copy size={16} color={C.onSurfaceVariant} />
+                  <span style={{ fontFamily: sans, fontSize: 13.5, color: C.onSurface }}>
+                    {codeCopied ? "Copied!" : "Copy secret code"}
                   </span>
-                  <ChevronRight size={16} color={C.faint} style={{ marginLeft: "auto" }} />
                 </div>
               </Touchable>
-              <AttrRow icon={BookOpen} label="Wisdom" score={wScore} color={C.wisdom} tagline="Books & strategic thinking" onClick={() => setTab("wisdom")} />
-              <AttrRow icon={Dumbbell} label="Vitality" score={vScore} color={C.vitality} tagline="Muay Thai, training, treks" onClick={() => setTab("vitality")} />
-              <AttrRow icon={Coins} label="Wealth" score={weScore} color={C.wealth} tagline="Investing & saving" onClick={() => setTab("wealth")} />
-              <AttrRow icon={ShieldCheck} label="Resolve" score={rScore} color={C.resolve} tagline="Daily discipline" onClick={() => setTab("resolve")} />
+              <Touchable onClick={changeCode} style={{ display: "block" }}>
+                <div className="flex items-center gap-3 px-4 py-3.5">
+                  <KeyRound size={16} color={C.onSurfaceVariant} />
+                  <span style={{ fontFamily: sans, fontSize: 13.5, color: C.onSurface }}>Change code / sign out</span>
+                </div>
+              </Touchable>
+              {!readOnly && (
+                <Touchable onClick={doReset} rippleColor={`${mix(C.danger, 20)}`} style={{ display: "block" }}>
+                  <div className="flex items-center gap-3 px-4 py-3.5">
+                    <RotateCcw size={16} color={resetArm ? C.danger : C.onSurfaceVariant} />
+                    <span style={{ fontFamily: sans, fontSize: 13.5, color: resetArm ? C.danger : C.onSurface }}>
+                      {resetArm ? "Tap again to confirm" : "Reset all data"}
+                    </span>
+                  </div>
+                </Touchable>
+              )}
             </div>
-            <TodayQuests state={state} set={update} today={today} />
-          </div>
+          </>
         )}
-        {tab === "wisdom" && <WisdomTab s={state.wisdom} set={update} />}
-        {tab === "vitality" && <VitalityTab s={state.vitality} set={update} locked={questLocked} />}
-        {tab === "wealth" && <WealthTab s={state.wealth} set={update} locked={questLocked} />}
-        {tab === "resolve" && <ResolveTab s={state.resolve} set={update} locked={questLocked} />}
-        {tab === "achievements" && <AchievementsTab state={state} overall={overall} />}
 
-        {/* FAB */}
-        <div
-          style={{
-            position: "sticky", bottom: 16, display: "flex", justifyContent: "flex-end",
-            paddingRight: 16, pointerEvents: "none",
-          }}
-        >
-          <Touchable
-            onClick={saveNow}
-            disabled={!dirty || syncStatus === "saving"}
-            rippleColor="rgba(0,0,0,0.15)"
+        <div className="px-1 pt-1">
+          <LevelCard
+            name={state.profile?.name || ""}
+            onNameChange={(v) => update((d) => { d.profile.name = v; })}
+            overall={overall}
+            totalXP={wScore + vScore + weScore + rScore}
+            today={today}
+            mode={mode}
+          />
+        </div>
+
+        <QuestStrip today={today} />
+        <div className="px-4 pb-1 flex items-center justify-between" style={{ flexShrink: 0 }}>
+          <span style={{ fontFamily: mono, color: C.faint, fontSize: 11 }}>Day {idx} / 91</span>
+          <span style={{ fontFamily: mono, color: C.faint, fontSize: 11 }}>Week {currentWeek}</span>
+        </div>
+
+        {/* scrollable content */}
+        <div className="flex-1 overflow-y-auto" style={{ position: "relative" }}>
+          {tab === "dashboard" && (
+            <div className="pb-4">
+              <div className="px-4 pt-3">
+                <Touchable
+                  onClick={() => setTab("achievements")}
+                  style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 16, display: "block", marginBottom: 14 }}
+                >
+                  <div className="flex items-center gap-3 px-4 py-3">
+                    <Hex size={30} color={C.accent}>
+                      <Trophy size={17} color={C.accent} />
+                    </Hex>
+                    <span style={{ color: C.onSurfaceVariant, fontSize: 12.5 }}>
+                      <span style={{ color: C.onSurface, fontFamily: mono }}>
+                        {ACHIEVEMENTS.filter((a) => a.check(state, overall)).length} / {ACHIEVEMENTS.length}
+                      </span>{" "}
+                      achievements unlocked
+                    </span>
+                    <ChevronRight size={16} color={C.faint} style={{ marginLeft: "auto" }} />
+                  </div>
+                </Touchable>
+                <AttrRow icon={BookOpen} label="Wisdom" score={wScore} color={C.wisdom} tagline="Books & strategic thinking" onClick={() => setTab("wisdom")} />
+                <AttrRow icon={Dumbbell} label="Vitality" score={vScore} color={C.vitality} tagline="Muay Thai, training, treks" onClick={() => setTab("vitality")} />
+                <AttrRow icon={Coins} label="Wealth" score={weScore} color={C.wealth} tagline="Investing & saving" onClick={() => setTab("wealth")} />
+                <AttrRow icon={ShieldCheck} label="Resolve" score={rScore} color={C.resolve} tagline="Daily discipline" onClick={() => setTab("resolve")} />
+              </div>
+              <TodayQuests state={state} set={update} today={today} />
+            </div>
+          )}
+          {tab === "wisdom" && <WisdomTab s={state.wisdom} set={update} />}
+          {tab === "vitality" && <VitalityTab s={state.vitality} set={update} locked={questLocked} />}
+          {tab === "wealth" && <WealthTab s={state.wealth} set={update} locked={questLocked} />}
+          {tab === "resolve" && <ResolveTab s={state.resolve} set={update} locked={questLocked} />}
+          {tab === "achievements" && <AchievementsTab state={state} overall={overall} />}
+
+          {/* FAB */}
+          {!readOnly && (
+          <div
             style={{
-              pointerEvents: dirty ? "auto" : "none",
-              background: dirty ? activeColor : C.containerHigh,
-              color: dirty ? C.surface : C.faint,
-              borderRadius: 20,
-              padding: dirty ? "14px 22px" : "14px",
-              display: "flex", alignItems: "center", gap: 8,
-              boxShadow: dirty ? "0 6px 16px rgba(0,0,0,0.4)" : "none",
-              opacity: dirty ? 1 : 0,
-              transform: dirty ? "scale(1)" : "scale(0.8)",
-              transition: "all 0.2s ease",
+              position: "sticky", bottom: 16, display: "flex", justifyContent: "flex-end",
+              paddingRight: 16, pointerEvents: "none",
             }}
           >
-            {syncStatus === "saving" ? <Loader2 size={18} className="md-spin" /> : <Save size={18} />}
-            {dirty && <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 14 }}>Save</span>}
-          </Touchable>
+            <Touchable
+              onClick={saveNow}
+              disabled={!dirty || syncStatus === "saving"}
+              style={{
+                position: "relative", overflow: "hidden",
+                pointerEvents: dirty ? "auto" : "none",
+                background: dirty ? `linear-gradient(155deg, ${mix("#fff", 22)}, transparent 60%), ${activeColor}` : C.containerHigh,
+                color: dirty ? C.surface : C.faint,
+                border: dirty ? `1px solid ${mix("#fff", 30)}` : `1px solid ${C.outlineVariant}`,
+                borderRadius: 18,
+                padding: dirty ? "13px 22px" : "14px",
+                display: "flex", alignItems: "center", gap: 8,
+                boxShadow: dirty
+                  ? `0 8px 22px ${mix(activeColor, 45)}, inset 0 1px 0 ${mix("#fff", 35)}`
+                  : "none",
+                opacity: dirty ? 1 : 0,
+                transform: dirty ? "scale(1)" : "scale(0.8)",
+                transition: "all 0.2s ease",
+              }}
+            >
+              {syncStatus === "saving" ? <Loader2 size={18} className="md-spin" /> : <Save size={18} strokeWidth={2.4} />}
+              {dirty && <span style={{ fontFamily: sans, fontWeight: 800, fontSize: 14, letterSpacing: 0.2 }}>Save</span>}
+            </Touchable>
+          </div>
+          )}
         </div>
-      </div>
 
-      <BottomNav tab={tab} setTab={setTab} tabs={tabs} />
+        <BottomNav tab={tab} setTab={setTab} tabs={tabs} />
+      </div>
     </div>
+    </ReadOnlyContext.Provider>
   );
 }
