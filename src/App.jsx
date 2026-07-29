@@ -95,9 +95,15 @@ const MT_END = new Date(2026, 9, 30);
 
 const CODE_STORAGE_KEY = "life-rpg-code";
 const THEME_STORAGE_KEY = "life-rpg-theme";
-const READ_ONLY_CODE = "read";
-const OWNER_POINTER_DOC = "_owner_pointer_";
+const MAIN_DOC_ID = "main";
+const AUTH_DOC_ID = "_auth_";
 const ReadOnlyContext = createContext(false);
+
+async function sha256Hex(str) {
+  const enc = new TextEncoder().encode(str);
+  const buf = await crypto.subtle.digest("SHA-256", enc);
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 function dayIndex(d) {
   return Math.floor((d - QUEST_START) / 86400000) + 1;
@@ -1232,17 +1238,36 @@ function ThemeToggle({ mode, onToggle }) {
 }
 
 /* ---------------------------------------------------------------
-   SECRET CODE GATE — shown before any data loads
+   SECRET CODE GATE — shown before any data loads.
+   setupMode=true: no profile exists yet anywhere — the very first
+   person here sets BOTH a write code and a read code at once, and
+   there can never be a second profile after this.
+   setupMode=false: profile already exists — a single code decides
+   whether this device gets write or read-only access.
 --------------------------------------------------------------- */
-function CodeGate({ onSubmit, mode, onToggleTheme }) {
+function CodeGate({ onSubmitEnter, onSubmitSetup, setupMode, checking, busy, error, mode, onToggleTheme }) {
   const [value, setValue] = useState("");
-  const [formMode, setFormMode] = useState("enter"); // "enter" | "create"
+  const [writeVal, setWriteVal] = useState("");
+  const [readVal, setReadVal] = useState("");
+  const [localError, setLocalError] = useState(null);
 
-  const submit = () => {
+  const submitEnter = () => {
     const clean = sanitizeCode(value);
-    if (clean.length < 4) return;
-    onSubmit(clean);
+    if (clean.length < 4) { setLocalError("Code must be at least 4 characters."); return; }
+    setLocalError(null);
+    onSubmitEnter(clean);
   };
+
+  const submitSetup = () => {
+    const w = sanitizeCode(writeVal);
+    const r = sanitizeCode(readVal);
+    if (w.length < 4 || r.length < 4) { setLocalError("Both codes must be at least 4 characters."); return; }
+    if (w.toLowerCase() === r.toLowerCase()) { setLocalError("Write and read codes must be different."); return; }
+    setLocalError(null);
+    onSubmitSetup(w, r);
+  };
+
+  const shownError = localError || error;
 
   return (
     <div
@@ -1262,48 +1287,98 @@ function CodeGate({ onSubmit, mode, onToggleTheme }) {
       <Hex size={64} color={C.accent} glow>
         <KeyRound size={30} color={C.accent} />
       </Hex>
-      <div style={{ fontFamily: sans, fontWeight: 900, fontSize: 20, color: C.onSurface, margin: "18px 0 6px", textAlign: "center" }}>
-        {formMode === "enter" ? "Enter your secret code" : "Choose a secret code"}
-      </div>
-      <p style={{ color: C.onSurfaceVariant, fontSize: 13, textAlign: "center", marginBottom: 22, lineHeight: 1.5 }}>
-        {formMode === "enter"
-          ? "Type the code you use on your other device to load your quest data."
-          : "Pick a long, unguessable code — this is what protects your data. Enter the same code on any device to sync."}
-      </p>
-      {formMode === "enter" && (
-        <p style={{ color: C.faint, fontSize: 11.5, textAlign: "center", marginTop: -14, marginBottom: 18, lineHeight: 1.4 }}>
-          Want to just look, not edit? Enter <span style={{ fontFamily: mono, color: C.onSurfaceVariant }}>read</span> for view-only access.
-        </p>
+
+      {checking ? (
+        <div style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 8 }}>
+          <Loader2 size={16} className="md-spin" color={C.onSurfaceVariant} />
+          <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>Checking…</span>
+        </div>
+      ) : setupMode ? (
+        <>
+          <div style={{ fontFamily: sans, fontWeight: 900, fontSize: 20, color: C.onSurface, margin: "18px 0 6px", textAlign: "center" }}>
+            Set up your quest
+          </div>
+          <p style={{ color: C.onSurfaceVariant, fontSize: 13, textAlign: "center", marginBottom: 22, lineHeight: 1.5 }}>
+            This is a one-time setup. Choose a write code (full access, for you) and a read code (view-only, for anyone you share it with). You can change both later.
+          </p>
+          <div style={{ width: "100%", marginBottom: 12 }}>
+            <label style={{ color: C.faint, fontSize: 11, fontFamily: sans, fontWeight: 600 }}>WRITE CODE (yours)</label>
+            <input
+              autoFocus
+              value={writeVal}
+              onChange={(e) => setWriteVal(e.target.value)}
+              placeholder="e.g. arjun-quest-9f3k2"
+              style={{
+                width: "100%", background: C.containerHigh, border: `1px solid ${C.outline}`, color: C.onSurface,
+                fontFamily: mono, fontSize: 14, borderRadius: 14, padding: "13px 16px", marginTop: 6, outline: "none",
+              }}
+            />
+          </div>
+          <div style={{ width: "100%", marginBottom: 16 }}>
+            <label style={{ color: C.faint, fontSize: 11, fontFamily: sans, fontWeight: 600 }}>READ CODE (share this)</label>
+            <input
+              value={readVal}
+              onChange={(e) => setReadVal(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") submitSetup(); }}
+              placeholder="e.g. family-view-7h2p"
+              style={{
+                width: "100%", background: C.containerHigh, border: `1px solid ${C.outline}`, color: C.onSurface,
+                fontFamily: mono, fontSize: 14, borderRadius: 14, padding: "13px 16px", marginTop: 6, outline: "none",
+              }}
+            />
+          </div>
+          {shownError && (
+            <p style={{ color: C.danger, fontSize: 12, textAlign: "center", marginBottom: 12 }}>{shownError}</p>
+          )}
+          <Touchable
+            onClick={submitSetup}
+            disabled={busy}
+            style={{
+              width: "100%", background: C.accent, color: "#fff", borderRadius: 16, padding: "13px 0",
+              display: "flex", alignItems: "center", justifyContent: "center", fontFamily: sans, fontWeight: 700, fontSize: 14.5,
+              boxShadow: `0 0 18px ${C.glow}`, opacity: busy ? 0.7 : 1, gap: 8,
+            }}
+          >
+            {busy && <Loader2 size={15} className="md-spin" />}
+            {busy ? "Creating…" : "Create quest"}
+          </Touchable>
+        </>
+      ) : (
+        <>
+          <div style={{ fontFamily: sans, fontWeight: 900, fontSize: 20, color: C.onSurface, margin: "18px 0 6px", textAlign: "center" }}>
+            Enter your code
+          </div>
+          <p style={{ color: C.onSurfaceVariant, fontSize: 13, textAlign: "center", marginBottom: 22, lineHeight: 1.5 }}>
+            Use your write code for full access, or a read code for view-only.
+          </p>
+          <input
+            autoFocus
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") submitEnter(); }}
+            placeholder="Enter your code"
+            style={{
+              width: "100%", background: C.containerHigh, border: `1px solid ${C.outline}`, color: C.onSurface,
+              fontFamily: mono, fontSize: 14, borderRadius: 14, padding: "13px 16px", marginBottom: 12, outline: "none",
+            }}
+          />
+          {shownError && (
+            <p style={{ color: C.danger, fontSize: 12, textAlign: "center", marginBottom: 12 }}>{shownError}</p>
+          )}
+          <Touchable
+            onClick={submitEnter}
+            disabled={busy}
+            style={{
+              width: "100%", background: C.accent, color: "#fff", borderRadius: 16, padding: "13px 0",
+              display: "flex", alignItems: "center", justifyContent: "center", fontFamily: sans, fontWeight: 700, fontSize: 14.5,
+              boxShadow: `0 0 18px ${C.glow}`, opacity: busy ? 0.7 : 1, gap: 8,
+            }}
+          >
+            {busy && <Loader2 size={15} className="md-spin" />}
+            {busy ? "Checking…" : "Continue"}
+          </Touchable>
+        </>
       )}
-      <input
-        autoFocus
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
-        placeholder="e.g. arjun-quest-9f3k2"
-        style={{
-          width: "100%", background: C.containerHigh, border: `1px solid ${C.outline}`, color: C.onSurface,
-          fontFamily: mono, fontSize: 14, borderRadius: 14, padding: "13px 16px", marginBottom: 16, outline: "none",
-        }}
-      />
-      <Touchable
-        onClick={submit}
-        style={{
-          width: "100%", background: C.accent, color: "#fff", borderRadius: 16, padding: "13px 0",
-          display: "flex", alignItems: "center", justifyContent: "center", fontFamily: sans, fontWeight: 700, fontSize: 14.5,
-          boxShadow: `0 0 18px ${C.glow}`,
-        }}
-      >
-        Continue
-      </Touchable>
-      <Touchable
-        onClick={() => setFormMode((m) => (m === "enter" ? "create" : "enter"))}
-        style={{ marginTop: 16, padding: "6px 10px", borderRadius: 10 }}
-      >
-        <span style={{ color: C.onSurfaceVariant, fontSize: 12.5 }}>
-          {formMode === "enter" ? "First time? Create a new code" : "Already have a code? Enter it"}
-        </span>
-      </Touchable>
     </div>
   );
 }
@@ -1506,7 +1581,7 @@ function TopAppBar({ syncStatus, onMenu, mode, onToggleTheme, readOnly }) {
   return (
     <div className="flex items-center justify-between px-3" style={{ height: 60, flexShrink: 0 }}>
       <div className="flex items-center gap-1.5 pl-1.5">
-        <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 16, letterSpacing: 0.5 }}>QUEST LOG</div>
+        <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 16, letterSpacing: 0.5 }}>+ ULTRA</div>
         {readOnly && (
           <span
             style={{
@@ -1599,8 +1674,20 @@ export default function LifeRPG() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [codeCopied, setCodeCopied] = useState(false);
   const [readOnly, setReadOnly] = useState(false);
-  const [dataCode, setDataCode] = useState(null); // the actual Firestore doc id backing what's on screen
-  const [noOwnerYet, setNoOwnerYet] = useState(false); // "read" entered before any real quest exists
+
+  // authConfig: undefined = still checking, null = no profile exists yet,
+  // object { writeCodeHash, readCodeHash } = the one and only profile.
+  const [authConfig, setAuthConfig] = useState(undefined);
+  const [authenticated, setAuthenticated] = useState(false);
+  const [authError, setAuthError] = useState(null);
+  const [authBusy, setAuthBusy] = useState(false);
+
+  // "Change access codes" panel, owner-only.
+  const [codesPanelOpen, setCodesPanelOpen] = useState(false);
+  const [newWrite, setNewWrite] = useState("");
+  const [newRead, setNewRead] = useState("");
+  const [codesError, setCodesError] = useState(null);
+  const [codesSaving, setCodesSaving] = useState(false);
 
   const dirtyRef = useRef(false);
   useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
@@ -1613,91 +1700,136 @@ export default function LifeRPG() {
     });
   }, []);
 
-  // Subscribe to the Firestore document for this code as soon as we have one.
-  // A code of "read" is special: it never owns its own document. Instead we
-  // look up the real owner's code from a small pointer doc and subscribe to
-  // THAT document, read-only (no writes, no auto-creation).
+  // There is exactly one profile, ever. This listens for whether it exists
+  // yet and, once it does, for its (hashed) write/read codes — so codes
+  // changed on one device take effect everywhere immediately.
   useEffect(() => {
-    if (!code) return;
-    setLoaded(false);
-    setNoOwnerYet(false);
-    let unsub = null;
+    const ref = doc(db, QUESTS_COLLECTION, AUTH_DOC_ID);
+    const unsub = onSnapshot(
+      ref,
+      (snap) => setAuthConfig(snap.exists() ? snap.data() : null),
+      () => setAuthConfig(null)
+    );
+    return () => unsub();
+  }, []);
+
+  // Validate whatever code this device has cached against the live
+  // authConfig. Never creates anything — only the setup flow does that.
+  useEffect(() => {
+    if (authConfig === undefined) return;
+    if (!code) { setAuthenticated(false); return; }
+
+    if (authConfig === null) {
+      // No profile exists — a cached code can't mean anything.
+      if (typeof window !== "undefined") localStorage.removeItem(CODE_STORAGE_KEY);
+      setCode(null);
+      setAuthenticated(false);
+      return;
+    }
+
     let cancelled = false;
-
     (async () => {
-      const isReadOnly = code.trim().toLowerCase() === READ_ONLY_CODE;
-      let targetCode = code;
-
-      if (isReadOnly) {
-        try {
-          const ptrSnap = await getDoc(doc(db, QUESTS_COLLECTION, OWNER_POINTER_DOC));
-          if (ptrSnap.exists() && ptrSnap.data()?.ownerCode) {
-            targetCode = ptrSnap.data().ownerCode;
-          } else {
-            if (!cancelled) {
-              setReadOnly(true);
-              setDataCode(null);
-              setNoOwnerYet(true);
-              setLoaded(true);
-              setSyncStatus("synced");
-            }
-            return;
-          }
-        } catch {
-          if (!cancelled) {
-            setReadOnly(true);
-            setSyncStatus("error");
-            setLoaded(true);
-          }
-          return;
-        }
-      }
-
+      const h = await sha256Hex(sanitizeCode(code));
       if (cancelled) return;
-      setReadOnly(isReadOnly);
-      setDataCode(targetCode);
-
-      const ref = doc(db, QUESTS_COLLECTION, targetCode);
-      unsub = onSnapshot(
-        ref,
-        async (snap) => {
-          if (snap.exists()) {
-            if (!dirtyRef.current) {
-              setState(migrateState(snap.data()));
-            }
-          } else if (!isReadOnly) {
-            const initial = defaultState();
-            try {
-              await setDoc(ref, initial);
-              await setDoc(doc(db, QUESTS_COLLECTION, OWNER_POINTER_DOC), { ownerCode: targetCode }, { merge: true });
-            } catch {
-              // ignore — will retry on next write
-            }
-            setState(initial);
-          } else {
-            setState(defaultState());
-          }
-          setLoaded(true);
-          setSyncStatus("synced");
-        },
-        () => {
-          setSyncStatus("error");
-          setLoaded(true);
-        }
-      );
-
-      // Full-access sign-ins keep the owner pointer fresh so "read" always
-      // resolves to the current real code, even if it changes later.
-      if (!isReadOnly) {
-        setDoc(doc(db, QUESTS_COLLECTION, OWNER_POINTER_DOC), { ownerCode: targetCode }, { merge: true }).catch(() => {});
+      if (h === authConfig.writeCodeHash) {
+        setReadOnly(false);
+        setAuthenticated(true);
+        setAuthError(null);
+      } else if (h === authConfig.readCodeHash) {
+        setReadOnly(true);
+        setAuthenticated(true);
+        setAuthError(null);
+      } else {
+        if (typeof window !== "undefined") localStorage.removeItem(CODE_STORAGE_KEY);
+        setCode(null);
+        setAuthenticated(false);
+        setAuthError("That code is no longer valid. Please enter your current code.");
       }
+      setAuthBusy(false);
     })();
+    return () => { cancelled = true; };
+  }, [code, authConfig]);
 
-    return () => {
-      cancelled = true;
-      if (unsub) unsub();
-    };
-  }, [code]);
+  // Subscribe to the single quest document once this device is authenticated.
+  useEffect(() => {
+    if (!authenticated) return;
+    setLoaded(false);
+    const ref = doc(db, QUESTS_COLLECTION, MAIN_DOC_ID);
+    const unsub = onSnapshot(
+      ref,
+      async (snap) => {
+        if (snap.exists()) {
+          if (!dirtyRef.current) setState(migrateState(snap.data()));
+        } else if (!readOnly) {
+          const initial = defaultState();
+          try { await setDoc(ref, initial); } catch {}
+          setState(initial);
+        } else {
+          setState(defaultState());
+        }
+        setLoaded(true);
+        setSyncStatus("synced");
+      },
+      () => { setSyncStatus("error"); setLoaded(true); }
+    );
+    return () => unsub();
+  }, [authenticated, readOnly]);
+
+  const submitEnter = useCallback((value) => {
+    setAuthError(null);
+    setAuthBusy(true);
+    if (typeof window !== "undefined") localStorage.setItem(CODE_STORAGE_KEY, value);
+    setCode(value);
+  }, []);
+
+  const submitSetup = useCallback(async (writeCode, readCode) => {
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      const existing = await getDoc(doc(db, QUESTS_COLLECTION, AUTH_DOC_ID));
+      if (existing.exists()) {
+        setAuthError("A profile already exists — please sign in instead.");
+        setAuthConfig(existing.data());
+        setAuthBusy(false);
+        return;
+      }
+      const [wHash, rHash] = await Promise.all([sha256Hex(writeCode), sha256Hex(readCode)]);
+      const authPayload = { writeCodeHash: wHash, readCodeHash: rHash };
+      await setDoc(doc(db, QUESTS_COLLECTION, AUTH_DOC_ID), authPayload);
+      await setDoc(doc(db, QUESTS_COLLECTION, MAIN_DOC_ID), defaultState());
+      setAuthConfig(authPayload); // optimistic — avoids a race with the listener
+      if (typeof window !== "undefined") localStorage.setItem(CODE_STORAGE_KEY, writeCode);
+      setCode(writeCode);
+    } catch {
+      setAuthError("Something went wrong creating your quest. Please try again.");
+      setAuthBusy(false);
+    }
+  }, []);
+
+  const submitChangeCodes = useCallback(async () => {
+    const w = sanitizeCode(newWrite);
+    const r = sanitizeCode(newRead);
+    if (w.length < 4 || r.length < 4) { setCodesError("Both codes must be at least 4 characters."); return; }
+    if (w.toLowerCase() === r.toLowerCase()) { setCodesError("Write and read codes must be different."); return; }
+    setCodesSaving(true);
+    setCodesError(null);
+    try {
+      const [wHash, rHash] = await Promise.all([sha256Hex(w), sha256Hex(r)]);
+      const authPayload = { writeCodeHash: wHash, readCodeHash: rHash };
+      await setDoc(doc(db, QUESTS_COLLECTION, AUTH_DOC_ID), authPayload);
+      setAuthConfig(authPayload);
+      if (typeof window !== "undefined") localStorage.setItem(CODE_STORAGE_KEY, w);
+      setCode(w);
+      setCodesPanelOpen(false);
+      setNewWrite("");
+      setNewRead("");
+      setMenuOpen(false);
+    } catch {
+      setCodesError("Couldn't save the new codes. Try again.");
+    } finally {
+      setCodesSaving(false);
+    }
+  }, [newWrite, newRead]);
 
   const update = useCallback((mutator) => {
     if (readOnly) return; // safety net — read-only sessions never write
@@ -1711,16 +1843,16 @@ export default function LifeRPG() {
   }, [readOnly]);
 
   const saveNow = useCallback(() => {
-    if (readOnly || !dataCode || !state) return;
+    if (readOnly || !state) return;
     setSyncStatus("saving");
-    const ref = doc(db, QUESTS_COLLECTION, dataCode);
+    const ref = doc(db, QUESTS_COLLECTION, MAIN_DOC_ID);
     setDoc(ref, state)
       .then(() => {
         setDirty(false);
         setSyncStatus("synced");
       })
       .catch(() => setSyncStatus("error"));
-  }, [readOnly, dataCode, state]);
+  }, [readOnly, state]);
 
   const doReset = useCallback(() => {
     if (readOnly) return;
@@ -1730,16 +1862,14 @@ export default function LifeRPG() {
       return;
     }
     const initial = defaultState();
-    if (dataCode) {
-      const ref = doc(db, QUESTS_COLLECTION, dataCode);
-      setDoc(ref, initial).catch(() => setSyncStatus("error"));
-    }
+    const ref = doc(db, QUESTS_COLLECTION, MAIN_DOC_ID);
+    setDoc(ref, initial).catch(() => setSyncStatus("error"));
     setState(initial);
     setDirty(false);
     setSyncStatus("synced");
     setResetArm(false);
     setMenuOpen(false);
-  }, [readOnly, resetArm, dataCode]);
+  }, [readOnly, resetArm]);
 
   const changeCode = useCallback(() => {
     if (typeof window !== "undefined") localStorage.removeItem(CODE_STORAGE_KEY);
@@ -1749,7 +1879,7 @@ export default function LifeRPG() {
     setDirty(false);
     setMenuOpen(false);
     setReadOnly(false);
-    setDataCode(null);
+    setAuthenticated(false);
   }, []);
 
   const copyCode = useCallback(() => {
@@ -1762,46 +1892,20 @@ export default function LifeRPG() {
     }
   }, [code]);
 
-  if (!code) {
+  if (!authenticated) {
     return (
       <div className={`theme-${mode}`}>
         <style>{THEME_CSS}</style>
         <CodeGate
           mode={mode}
           onToggleTheme={toggleTheme}
-          onSubmit={(c) => {
-            if (typeof window !== "undefined") localStorage.setItem(CODE_STORAGE_KEY, c);
-            setCode(c);
-          }}
+          checking={authConfig === undefined}
+          busy={authBusy}
+          setupMode={authConfig === null}
+          error={authError}
+          onSubmitEnter={submitEnter}
+          onSubmitSetup={submitSetup}
         />
-      </div>
-    );
-  }
-
-  if (loaded && noOwnerYet) {
-    return (
-      <div className={`theme-${mode}`}>
-        <style>{THEME_CSS}</style>
-        <div
-          style={{
-            background: C.surface, fontFamily: sans, maxWidth: 420, margin: "0 auto",
-            height: 780, borderRadius: 28, overflow: "hidden",
-            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-            boxShadow: "var(--shell-shadow)", border: `1px solid ${C.outlineVariant}`, padding: 32,
-          }}
-        >
-          <style>{FONT_IMPORT}</style>
-          <Lock size={28} color={C.faint} style={{ marginBottom: 14 }} />
-          <div style={{ fontFamily: sans, fontWeight: 700, fontSize: 16, color: C.onSurface, marginBottom: 6, textAlign: "center" }}>
-            No quest yet
-          </div>
-          <p style={{ color: C.onSurfaceVariant, fontSize: 13, textAlign: "center", lineHeight: 1.5 }}>
-            The read-only code works once someone has set up their quest with their own secret code.
-          </p>
-          <Touchable onClick={changeCode} style={{ marginTop: 20, padding: "8px 14px", borderRadius: 10, border: `1px solid ${C.outline}` }}>
-            <span style={{ color: C.onSurfaceVariant, fontSize: 12.5 }}>Try a different code</span>
-          </Touchable>
-        </div>
       </div>
     );
   }
@@ -1886,9 +1990,17 @@ export default function LifeRPG() {
               <Touchable onClick={changeCode} style={{ display: "block" }}>
                 <div className="flex items-center gap-3 px-4 py-3.5">
                   <KeyRound size={16} color={C.onSurfaceVariant} />
-                  <span style={{ fontFamily: sans, fontSize: 13.5, color: C.onSurface }}>Change code / sign out</span>
+                  <span style={{ fontFamily: sans, fontSize: 13.5, color: C.onSurface }}>Sign out</span>
                 </div>
               </Touchable>
+              {!readOnly && (
+                <Touchable onClick={() => { setMenuOpen(false); setCodesError(null); setCodesPanelOpen(true); }} style={{ display: "block" }}>
+                  <div className="flex items-center gap-3 px-4 py-3.5">
+                    <KeyRound size={16} color={C.onSurfaceVariant} />
+                    <span style={{ fontFamily: sans, fontSize: 13.5, color: C.onSurface }}>Change access codes</span>
+                  </div>
+                </Touchable>
+              )}
               {!readOnly && (
                 <Touchable onClick={doReset} rippleColor={`${mix(C.danger, 20)}`} style={{ display: "block" }}>
                   <div className="flex items-center gap-3 px-4 py-3.5">
@@ -1899,6 +2011,73 @@ export default function LifeRPG() {
                   </div>
                 </Touchable>
               )}
+            </div>
+          </>
+        )}
+
+        {codesPanelOpen && (
+          <>
+            <div
+              onClick={() => { setCodesPanelOpen(false); setCodesError(null); }}
+              style={{ position: "absolute", inset: 0, zIndex: 30, background: "rgba(0,0,0,0.5)" }}
+            />
+            <div
+              style={{
+                position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+                zIndex: 31, width: "calc(100% - 48px)", maxWidth: 340,
+                background: C.containerHighest, borderRadius: 18, border: `1px solid ${C.outlineVariant}`,
+                boxShadow: "0 12px 32px rgba(0,0,0,0.5)", padding: 20,
+              }}
+            >
+              <div style={{ fontFamily: sans, fontWeight: 800, fontSize: 15.5, color: C.onSurface, marginBottom: 4 }}>
+                Change access codes
+              </div>
+              <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 14, lineHeight: 1.4 }}>
+                This replaces both codes everywhere, including on devices already signed in. This device switches to the new write code automatically.
+              </p>
+              <label style={{ color: C.faint, fontSize: 10.5, fontFamily: sans, fontWeight: 600 }}>NEW WRITE CODE</label>
+              <input
+                value={newWrite}
+                onChange={(e) => setNewWrite(e.target.value)}
+                placeholder="New write code"
+                style={{
+                  width: "100%", background: C.containerHigh, border: `1px solid ${C.outline}`, color: C.onSurface,
+                  fontFamily: mono, fontSize: 13, borderRadius: 12, padding: "10px 12px", margin: "6px 0 12px", outline: "none",
+                }}
+              />
+              <label style={{ color: C.faint, fontSize: 10.5, fontFamily: sans, fontWeight: 600 }}>NEW READ CODE</label>
+              <input
+                value={newRead}
+                onChange={(e) => setNewRead(e.target.value)}
+                placeholder="New read code"
+                style={{
+                  width: "100%", background: C.containerHigh, border: `1px solid ${C.outline}`, color: C.onSurface,
+                  fontFamily: mono, fontSize: 13, borderRadius: 12, padding: "10px 12px", margin: "6px 0 12px", outline: "none",
+                }}
+              />
+              {codesError && (
+                <p style={{ color: C.danger, fontSize: 11.5, marginBottom: 10 }}>{codesError}</p>
+              )}
+              <div className="flex items-center gap-2" style={{ marginTop: 4 }}>
+                <Touchable
+                  onClick={() => { setCodesPanelOpen(false); setCodesError(null); }}
+                  style={{ flex: 1, padding: "10px 0", borderRadius: 12, border: `1px solid ${C.outline}`, display: "flex", alignItems: "center", justifyContent: "center" }}
+                >
+                  <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>Cancel</span>
+                </Touchable>
+                <Touchable
+                  onClick={submitChangeCodes}
+                  disabled={codesSaving}
+                  style={{
+                    flex: 1, padding: "10px 0", borderRadius: 12, background: C.accent, color: "#fff",
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                    fontWeight: 700, fontSize: 13, opacity: codesSaving ? 0.7 : 1,
+                  }}
+                >
+                  {codesSaving && <Loader2 size={14} className="md-spin" />}
+                  {codesSaving ? "Saving…" : "Save"}
+                </Touchable>
+              </div>
             </div>
           </>
         )}
