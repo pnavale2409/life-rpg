@@ -117,6 +117,9 @@ function fmtDate(d) {
 function clamp(n, lo, hi) {
   return Math.max(lo, Math.min(hi, n));
 }
+function dateOnly(d) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
 /* Our theme colors are CSS var() references (e.g. "var(--wisdom)") so a
    trailing hex alpha suffix like `${color}66` — which worked when C.* held
    literal hex strings — is invalid CSS on a var() and silently drops the
@@ -241,6 +244,7 @@ function defaultState() {
     wealth: {
       invest: [false, false, false],
       save: [0, 0, 0],
+      saveAllowance: [0, 0, 0], // in units of ₹1,000, drawn from a shared ₹5,000 pool across the 3 months
     },
     resolve: {
       dailyLogs: {},
@@ -282,6 +286,7 @@ function migrateState(parsed) {
   if (!next.vitality.abWeeks) next.vitality.abWeeks = base.vitality.abWeeks;
   if (!next.wisdom) next.wisdom = base.wisdom;
   if (!next.wealth) next.wealth = base.wealth;
+  if (!Array.isArray(next.wealth.saveAllowance)) next.wealth = { ...next.wealth, saveAllowance: [0, 0, 0] };
   if (!next.resolve) next.resolve = base.resolve;
   return next;
 }
@@ -312,10 +317,14 @@ function savePoints(amt) {
   if (amt >= 15000) return 12;
   return Math.max(0, 12 - Math.floor((15000 - amt) / 1000));
 }
+const SAVE_ALLOWANCE_POOL = 5; // ₹5,000 total, in units of ₹1,000
+function effSave(s, i) {
+  return s.save[i] + (s.saveAllowance?.[i] || 0) * 1000;
+}
 function wealthScore(s) {
   const inv = s.invest.filter(Boolean).length * 20;
-  const sav = s.save.reduce((sum, a) => sum + savePoints(a), 0);
-  const bonus = s.save.every((a) => a >= 15000) ? 4 : 0;
+  const sav = s.save.reduce((sum, _a, i) => sum + savePoints(effSave(s, i)), 0);
+  const bonus = s.save.every((_a, i) => effSave(s, i) >= 15000) ? 4 : 0;
   return clamp(inv + sav + bonus, 0, 100);
 }
 function resolveScore(s) {
@@ -359,8 +368,8 @@ const ACHIEVEMENTS = [
   { id: "v8", attr: "vitality", label: "Vitality Master", desc: "Reach 100/100 Vitality.", check: (s) => vitalityScore(s.vitality) >= 100 },
   { id: "we1", attr: "wealth", label: "First Investment", desc: "Invest ₹50,000 in a month.", check: (s) => s.wealth.invest.some(Boolean) },
   { id: "we2", attr: "wealth", label: "Investor", desc: "Hit the invest target 3 months running.", check: (s) => s.wealth.invest.every(Boolean) },
-  { id: "we3", attr: "wealth", label: "Saver", desc: "Hit the ₹15,000 save target in a month.", check: (s) => s.wealth.save.some((a) => a >= 15000) },
-  { id: "we4", attr: "wealth", label: "Consistency Bonus", desc: "Hit the save target all 3 months.", check: (s) => s.wealth.save.every((a) => a >= 15000) },
+  { id: "we3", attr: "wealth", label: "Saver", desc: "Hit the ₹15,000 save target in a month.", check: (s) => s.wealth.save.some((a, i) => effSave(s.wealth, i) >= 15000) },
+  { id: "we4", attr: "wealth", label: "Consistency Bonus", desc: "Hit the save target all 3 months.", check: (s) => s.wealth.save.every((a, i) => effSave(s.wealth, i) >= 15000) },
   { id: "we5", attr: "wealth", label: "Wealth Master", desc: "Reach 100/100 Wealth.", check: (s) => wealthScore(s.wealth) >= 100 },
   { id: "r1", attr: "resolve", label: "Perfect Day", desc: "Complete all 4 daily missions in one day.", check: (s) => perfectDaysCount(s.resolve.dailyLogs) >= 1 },
   { id: "r2", attr: "resolve", label: "Steady Streak", desc: "Log 14 perfect days.", check: (s) => perfectDaysCount(s.resolve.dailyLogs) >= 14 },
@@ -867,7 +876,7 @@ function WealthTab({ s, set, locked }) {
         <Mission
           title="Save — ₹15,000 / month"
           points={40}
-          earned={s.save.reduce((sum, a) => sum + savePoints(a), 0) + (s.save.every((a) => a >= 15000) ? 4 : 0)}
+          earned={s.save.reduce((sum, _a, i) => sum + savePoints(effSave(s, i)), 0) + (s.save.every((_a, i) => effSave(s, i) >= 15000) ? 4 : 0)}
           color={C.wealth}
         >
           <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 10 }}>
@@ -891,11 +900,11 @@ function WealthTab({ s, set, locked }) {
                     opacity: readOnly ? 0.7 : 1,
                   }}
                 />
-                <span style={{ fontFamily: mono, fontSize: 12, color: C.wealth }}>{savePoints(s.save[i])} pts</span>
+                <span style={{ fontFamily: mono, fontSize: 12, color: C.wealth }}>{savePoints(effSave(s, i))} pts</span>
               </div>
             ))}
-            <span style={{ fontFamily: mono, fontSize: 11.5, color: s.save.every((a) => a >= 15000) ? C.wealth : C.faint }}>
-              Consistency bonus: {s.save.every((a) => a >= 15000) ? "+4 earned" : "0 / 4"}
+            <span style={{ fontFamily: mono, fontSize: 11.5, color: s.save.every((_a, i) => effSave(s, i) >= 15000) ? C.wealth : C.faint }}>
+              Consistency bonus: {s.save.every((_a, i) => effSave(s, i) >= 15000) ? "+4 earned" : "0 / 4"}
             </span>
           </div>
         </Mission>
@@ -907,10 +916,10 @@ function WealthTab({ s, set, locked }) {
 /* ---------------------------------------------------------------
    RESOLVE TAB
 --------------------------------------------------------------- */
-function ResolveTab({ s, set, locked }) {
+function ResolveTab({ s, set, locked, wealth }) {
   const score = resolveScore(s);
   const [viewDate, setViewDate] = useState(() => {
-    const t = new Date();
+    const t = dateOnly(new Date());
     return t >= QUEST_START && t <= QUEST_END ? t : QUEST_START;
   });
   const key = fmtDate(viewDate);
@@ -922,7 +931,7 @@ function ResolveTab({ s, set, locked }) {
   const shiftDay = (n) => {
     const nd = new Date(viewDate);
     nd.setDate(nd.getDate() + n);
-    if (nd >= QUEST_START && nd <= QUEST_END) setViewDate(nd);
+    if (dateOnly(nd) >= QUEST_START && dateOnly(nd) <= QUEST_END) setViewDate(nd);
   };
 
   const dailyItems = [
@@ -944,6 +953,7 @@ function ResolveTab({ s, set, locked }) {
     0
   );
   const weeklyEarned = Object.values(s.weeklyLogs).reduce((sum, w) => sum + (w.laundry ? 1 : 0) + (w.iron ? 1 : 0), 0);
+  const months = ["August", "September", "October"];
 
   return (
     <div className="pb-4">
@@ -1041,6 +1051,44 @@ function ResolveTab({ s, set, locked }) {
               <span style={{ fontFamily: mono, fontSize: 13.5, color: totalDeduction > 0 ? C.danger : C.faint, fontWeight: 700 }}>
                 −{totalDeduction} pt{totalDeduction === 1 ? "" : "s"}
               </span>
+            </div>
+
+            <div className="pt-3" style={{ borderTop: `1px solid ${C.outlineVariant}` }}>
+              <p style={{ fontFamily: sans, fontWeight: 600, color: C.onSurfaceVariant, fontSize: 12, marginBottom: 2 }}>
+                Savings top-up
+              </p>
+              <p style={{ color: C.faint, fontSize: 11, marginBottom: 10, lineHeight: 1.4 }}>
+                A shared ₹5,000 pool, in ₹1,000 steps, to cover a short month's savings toward the ₹15,000 target.
+              </p>
+              {months.map((m, i) => {
+                const shortfall = Math.max(0, 15000 - wealth.save[i]);
+                const used = wealth.saveAllowance.reduce((sum, u) => sum + u, 0);
+                const remaining = SAVE_ALLOWANCE_POOL - used;
+                const maxForMonth = wealth.saveAllowance[i] + Math.max(0, remaining);
+                return (
+                  <div key={m} className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+                    <div>
+                      <span style={{ color: C.onSurfaceVariant, fontSize: 12.5 }}>{m}</span>
+                      <div style={{ fontFamily: mono, fontSize: 10.5, color: C.faint }}>
+                        {shortfall > 0 ? `short ₹${shortfall.toLocaleString("en-IN")}` : "target met"}
+                        {wealth.saveAllowance[i] > 0 && ` · using ₹${(wealth.saveAllowance[i] * 1000).toLocaleString("en-IN")}`}
+                      </div>
+                    </div>
+                    <Counter
+                      value={wealth.saveAllowance[i]}
+                      max={maxForMonth}
+                      color={C.resolve}
+                      onChange={(v) => set((d) => { d.wealth.saveAllowance[i] = v; })}
+                    />
+                  </div>
+                );
+              })}
+              <div className="flex items-center justify-between pt-2" style={{ borderTop: `1px solid ${C.outlineVariant}` }}>
+                <span style={{ fontFamily: sans, fontWeight: 500, color: C.onSurfaceVariant, fontSize: 12.5 }}>Allowance remaining</span>
+                <span style={{ fontFamily: mono, fontSize: 13.5, color: (SAVE_ALLOWANCE_POOL - wealth.saveAllowance.reduce((sum, u) => sum + u, 0)) > 0 ? C.resolve : C.faint, fontWeight: 700 }}>
+                  ₹{((SAVE_ALLOWANCE_POOL - wealth.saveAllowance.reduce((sum, u) => sum + u, 0)) * 1000).toLocaleString("en-IN")} / ₹{(SAVE_ALLOWANCE_POOL * 1000).toLocaleString("en-IN")}
+                </span>
+              </div>
             </div>
           </div>
         </Mission>
@@ -2132,7 +2180,7 @@ export default function LifeRPG() {
           {tab === "wisdom" && <WisdomTab s={state.wisdom} set={update} />}
           {tab === "vitality" && <VitalityTab s={state.vitality} set={update} locked={questLocked} />}
           {tab === "wealth" && <WealthTab s={state.wealth} set={update} locked={questLocked} />}
-          {tab === "resolve" && <ResolveTab s={state.resolve} set={update} locked={questLocked} />}
+          {tab === "resolve" && <ResolveTab s={state.resolve} set={update} locked={questLocked} wealth={state.wealth} />}
           {tab === "achievements" && <AchievementsTab state={state} overall={overall} />}
 
           {/* FAB */}
