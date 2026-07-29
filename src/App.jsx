@@ -1666,7 +1666,7 @@ function BottomNav({ tab, setTab, tabs }) {
     <div style={{ flexShrink: 0, padding: "0 12px 12px", background: C.surface }}>
       <div
         style={{
-          height: NAV_H - 12, borderRadius: 22,
+          height: NAV_H - 12, borderRadius: 12,
           background: C.containerHigh,
           border: `1px solid ${C.outlineVariant}`,
           boxShadow: "0 8px 22px rgba(0,0,0,0.28)",
