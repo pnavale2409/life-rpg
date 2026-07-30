@@ -4,7 +4,7 @@ import { db, QUESTS_COLLECTION } from "./firebase.js";
 import {
   BookOpen, Dumbbell, Coins, ShieldCheck, ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
   Mountain, Check, Minus, Plus, Save, Trophy, Crown, Lock, RotateCcw, Home, MoreVertical,
-  CheckCircle2, CloudOff, Loader2, KeyRound, Copy, Sun, Moon, Sparkles, Calendar,
+  CheckCircle2, CloudOff, Loader2, KeyRound, Copy, Sun, Moon, Sparkles, Calendar, Trash2,
 } from "lucide-react";
 
 /* ---------------------------------------------------------------
@@ -196,8 +196,8 @@ function rankInfo(totalXP) {
    only works with concrete hex — CSS var() references can't take a
    trailing alpha suffix like that. */
 const RANK_COLORS = {
-  dark: { E: "#8A93B8", D: "#4ADE80", C: "#4F8EFF", B: "#B388FF", A: "#FF9F45", S: "#FFD54F", SS: "#FF5C7A" },
-  light: { E: "#6E7997", D: "#16A34A", C: "#2F6FEF", B: "#7C4FE0", A: "#C05F0F", S: "#A9790A", SS: "#D6284A" },
+  dark: { E: "#8A93B8", D: "#4ADE80", C: "#4F8EFF", B: "#FB6F92", A: "#FF9F45", S: "#FF4D67", SS: "#F5FAFF" },
+  light: { E: "#6E7997", D: "#16A34A", C: "#2F6FEF", B: "#BE185D", A: "#C05F0F", S: "#9F1239", SS: "#111827" },
 };
 function rankColor(rank, mode) {
   return (RANK_COLORS[mode] || RANK_COLORS.dark)[rank] || (RANK_COLORS[mode] || RANK_COLORS.dark).C;
@@ -253,6 +253,7 @@ function defaultState() {
       junkFood: 0,
       mtLeaves: 0,
       wakeBreaks: 0,
+      bonusTasks: [], // [{ id, title, description, completed }] — each completed task is worth +1 point
     },
   };
 }
@@ -288,6 +289,7 @@ function migrateState(parsed) {
   if (!next.wealth) next.wealth = base.wealth;
   if (!Array.isArray(next.wealth.saveAllowance)) next.wealth = { ...next.wealth, saveAllowance: [0, 0, 0] };
   if (!next.resolve) next.resolve = base.resolve;
+  if (!Array.isArray(next.resolve.bonusTasks)) next.resolve = { ...next.resolve, bonusTasks: [] };
   return next;
 }
 
@@ -339,7 +341,9 @@ function resolveScore(s) {
   const bedsheets = s.bedsheets * 0.4;
   const deductions =
     Math.max(0, s.junkFood - 8) + Math.max(0, s.mtLeaves - 6) + Math.max(0, s.wakeBreaks - 20);
-  return clamp(daily + weekly + bedsheets - deductions, 0, 100);
+  const bonusPoints = (s.bonusTasks || []).filter((t) => t.completed).length;
+  const netDeductions = Math.max(0, deductions - bonusPoints);
+  return clamp(daily + weekly + bedsheets - netDeductions, 0, 100);
 }
 
 /* ---------------------------------------------------------------
@@ -626,7 +630,7 @@ function ScreenHeader({ title, sub, color, score }) {
 function Mission({ title, points, earned, children, color, defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div style={{ position: "relative", background: C.container, borderRadius: 16 }} className="mx-4 mb-3 overflow-hidden">
+    <div style={{ position: "relative", background: C.container, borderRadius: 10 }} className="mx-4 mb-3 overflow-hidden">
       <div
         style={{
           position: "absolute", left: 0, top: "22%", bottom: "22%", width: 3, borderRadius: 3,
@@ -947,6 +951,9 @@ function ResolveTab({ s, set, locked, wealth }) {
     ["wakeBreaks", "Wake-up breaks", 20],
   ];
   const totalDeduction = allowanceItems.reduce((sum, [k, , allow]) => sum + Math.max(0, s[k] - allow), 0);
+  const bonusTasks = s.bonusTasks || [];
+  const bonusPoints = bonusTasks.filter((t) => t.completed).length;
+  const netDeduction = Math.max(0, totalDeduction - bonusPoints);
 
   const dailyEarned = Object.values(s.dailyLogs).reduce(
     (sum, l) => sum + (l.wake ? 0.2 : 0) + (l.plan ? 0.2 : 0) + (l.hair ? 0.2 : 0) + (l.teeth ? 0.2 : 0),
@@ -1047,9 +1054,21 @@ function ResolveTab({ s, set, locked, wealth }) {
               );
             })}
             <div className="flex items-center justify-between pt-2" style={{ borderTop: `1px solid ${C.outlineVariant}` }}>
-              <span style={{ fontFamily: sans, fontWeight: 500, color: C.onSurfaceVariant, fontSize: 12.5 }}>Total deduction</span>
+              <span style={{ fontFamily: sans, fontWeight: 500, color: C.onSurfaceVariant, fontSize: 12.5 }}>Negative points</span>
               <span style={{ fontFamily: mono, fontSize: 13.5, color: totalDeduction > 0 ? C.danger : C.faint, fontWeight: 700 }}>
                 −{totalDeduction} pt{totalDeduction === 1 ? "" : "s"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span style={{ color: C.onSurfaceVariant, fontSize: 12.5 }}>Bonus points available</span>
+              <span style={{ fontFamily: mono, fontSize: 13.5, color: bonusPoints > 0 ? C.resolve : C.faint, fontWeight: 700 }}>
+                +{bonusPoints} pt{bonusPoints === 1 ? "" : "s"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between pt-2" style={{ borderTop: `1px solid ${C.outlineVariant}` }}>
+              <span style={{ fontFamily: sans, fontWeight: 500, color: C.onSurfaceVariant, fontSize: 12.5 }}>Net after bonus</span>
+              <span style={{ fontFamily: mono, fontSize: 13.5, color: netDeduction > 0 ? C.danger : C.faint, fontWeight: 700 }}>
+                {netDeduction > 0 ? `−${netDeduction} pt${netDeduction === 1 ? "" : "s"}` : "0 pts"}
               </span>
             </div>
 
@@ -1092,8 +1111,154 @@ function ResolveTab({ s, set, locked, wealth }) {
             </div>
           </div>
         </Mission>
+
+        <BonusTasksMission s={s} set={set} />
       </LockWrap>
     </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   BONUS TASKS — freeform tasks worth +1 point each; completed ones
+   offset the Discipline Allowance's negative points in Resolve.
+--------------------------------------------------------------- */
+function BonusTasksMission({ s, set }) {
+  const [adding, setAdding] = useState(false);
+  const [title, setTitle] = useState("");
+  const [desc, setDesc] = useState("");
+  const tasks = s.bonusTasks || [];
+  const bonusPoints = tasks.filter((t) => t.completed).length;
+
+  const addTask = () => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    set((d) => {
+      if (!d.resolve.bonusTasks) d.resolve.bonusTasks = [];
+      d.resolve.bonusTasks.push({
+        id: `bt-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        title: trimmed,
+        description: desc.trim(),
+        completed: false,
+      });
+    });
+    setTitle("");
+    setDesc("");
+    setAdding(false);
+  };
+
+  const cancelAdd = () => {
+    setTitle("");
+    setDesc("");
+    setAdding(false);
+  };
+
+  return (
+    <Mission title="Bonus Tasks" points={bonusPoints} color={C.resolve}>
+      <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 12 }}>
+        Each completed task is worth +1 point, and can offset negative points above.
+      </p>
+
+      <div style={{ marginBottom: 14 }}>
+        {!adding ? (
+          <Touchable
+            onClick={() => setAdding(true)}
+            style={{
+              background: C.resolve, borderRadius: 10, padding: "9px 0",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            }}
+          >
+            <Plus size={14} color="#fff" />
+            <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add Task</span>
+          </Touchable>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <input
+              type="text"
+              autoFocus
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Task title"
+              style={{
+                background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, color: C.onSurface,
+                fontFamily: sans, fontSize: 13, borderRadius: 10, padding: "9px 12px", outline: "none",
+              }}
+            />
+            <textarea
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+              placeholder="Description (optional)"
+              rows={2}
+              style={{
+                background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, color: C.onSurface,
+                fontFamily: sans, fontSize: 12.5, borderRadius: 10, padding: "9px 12px", outline: "none", resize: "none",
+              }}
+            />
+            <div className="flex items-center gap-2">
+              <Touchable
+                onClick={cancelAdd}
+                style={{
+                  flex: 1, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+              >
+                <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Cancel</span>
+              </Touchable>
+              <Touchable
+                onClick={addTask}
+                style={{
+                  flex: 1, background: C.resolve, borderRadius: 10, padding: "9px 0",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                }}
+              >
+                <Plus size={14} color="#fff" />
+                <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add Task</span>
+              </Touchable>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-2">
+        {tasks.length === 0 ? (
+          <p style={{ color: C.faint, fontSize: 12.5 }}>No bonus tasks yet.</p>
+        ) : (
+          tasks.map((t) => (
+            <div
+              key={t.id}
+              style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 12, padding: "10px 12px" }}
+            >
+              <div className="flex items-start gap-2">
+                <Check2
+                  checked={!!t.completed}
+                  color={C.resolve}
+                  onClick={() => set((d) => {
+                    const task = d.resolve.bonusTasks.find((x) => x.id === t.id);
+                    if (task) task.completed = !task.completed;
+                  })}
+                />
+                <div className="flex-1 min-w-0">
+                  <span style={{
+                    color: t.completed ? C.faint : C.onSurface, fontSize: 13.5, fontWeight: 600,
+                    textDecoration: t.completed ? "line-through" : "none",
+                  }}>
+                    {t.title}
+                  </span>
+                  {t.description && (
+                    <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginTop: 2 }}>{t.description}</p>
+                  )}
+                </div>
+                <Touchable
+                  onClick={() => set((d) => { d.resolve.bonusTasks = d.resolve.bonusTasks.filter((x) => x.id !== t.id); })}
+                  style={{ padding: 4, flexShrink: 0 }}
+                >
+                  <Trash2 size={15} color={C.faint} />
+                </Touchable>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </Mission>
   );
 }
 
@@ -1158,110 +1323,142 @@ function AchievementsTab({ state, overall }) {
 /* ---------------------------------------------------------------
    TODAY'S QUESTS — HUD checklist card
 --------------------------------------------------------------- */
-function TodayQuests({ state, set, today }) {
+function QuestBar({ state, set, today }) {
   const idx = dayIndex(today);
-  if (idx < 1 || idx > TOTAL_DAYS) return null;
+  const inRange = idx >= 1 && idx <= TOTAL_DAYS;
   const key = fmtDate(today);
-  const weekNum = clamp(Math.ceil(idx / 7), 1, 13);
+  const weekNum = inRange ? clamp(Math.ceil(idx / 7), 1, 13) : 1;
   const weekIdx = weekNum - 1;
-  const log = state.resolve.dailyLogs[key] || {};
-  const wlog = state.resolve.weeklyLogs[weekNum] || {};
+  const log = (inRange && state.resolve.dailyLogs[key]) || {};
+  const wlog = (inRange && state.resolve.weeklyLogs[weekNum]) || {};
   const wd = today.getDay();
   const isWeekday = wd !== 0 && wd !== 6;
   const mtDone = !!state.vitality.muayThai[key];
+  const [open, setOpen] = useState(false);
 
-  const dailyItems = [
+  const dailyItemDefs = !inRange ? [] : [
     ["wake", "Wake up by 7:00 AM"],
     ["plan", "Create the day's plan"],
     ["hair", "Hair care routine"],
     ["teeth", "Brush teeth before bed"],
   ].filter(([k]) => !log[k]);
 
-  const weeklyItems = [
+  const weeklyItemDefs = !inRange ? [] : [
     ["laundry", "Laundry"],
     ["iron", "Iron clothes"],
   ].filter(([k]) => !wlog[k]);
 
-  const armSessions = state.vitality.armWeeks[weekIdx] || [];
-  const abSessions = state.vitality.abWeeks[weekIdx] || [];
+  const armSessions = (inRange && state.vitality.armWeeks[weekIdx]) || [];
+  const abSessions = (inRange && state.vitality.abWeeks[weekIdx]) || [];
   const armPending = armSessions.map((v, si) => ({ v, si })).filter((x) => !x.v);
   const abPending = abSessions.map((v, si) => ({ v, si })).filter((x) => !x.v);
+  const mtPending = inRange && isWeekday && MT_DATES.includes(key) && !mtDone;
 
-  const mtPending = isWeekday && MT_DATES.includes(key) && !mtDone;
-  const totalPending =
-    dailyItems.length + weeklyItems.length + armPending.length + abPending.length + (mtPending ? 1 : 0);
+  const daily = [
+    ...(mtPending ? [{ id: "mt", label: "Muay Thai class", color: C.vitality, onClick: () => set((d) => { d.vitality.muayThai[key] = true; }) }] : []),
+    ...dailyItemDefs.map(([k, label]) => ({
+      id: k, label, color: C.resolve,
+      onClick: () => set((d) => {
+        if (!d.resolve.dailyLogs[key]) d.resolve.dailyLogs[key] = { wake: false, plan: false, hair: false, teeth: false };
+        d.resolve.dailyLogs[key][k] = true;
+      }),
+    })),
+  ];
+
+  const weekly = [
+    ...weeklyItemDefs.map(([k, label]) => ({
+      id: k, label, color: C.resolve,
+      onClick: () => set((d) => {
+        if (!d.resolve.weeklyLogs[weekNum]) d.resolve.weeklyLogs[weekNum] = { laundry: false, iron: false };
+        d.resolve.weeklyLogs[weekNum][k] = true;
+      }),
+    })),
+    ...armPending.map(({ si }) => ({ id: `arm-${si}`, label: "Arm Training", color: C.vitality, onClick: () => set((d) => { d.vitality.armWeeks[weekIdx][si] = true; }) })),
+    ...abPending.map(({ si }) => ({ id: `ab-${si}`, label: "Ab Training", color: C.vitality, onClick: () => set((d) => { d.vitality.abWeeks[weekIdx][si] = true; }) })),
+  ];
+
+  const bonus = (state.resolve.bonusTasks || [])
+    .filter((t) => !t.completed)
+    .map((t) => ({
+      id: t.id, label: t.title, color: C.resolve,
+      onClick: () => set((d) => {
+        const task = d.resolve.bonusTasks.find((x) => x.id === t.id);
+        if (task) task.completed = true;
+      }),
+    }));
+
+  const groups = [
+    { key: "daily", label: "Daily", color: C.resolve, items: daily },
+    { key: "weekly", label: "Weekly", color: C.vitality, items: weekly },
+    { key: "bonus", label: "Bonus", color: C.wealth, items: bonus },
+  ];
 
   return (
-    <div style={{ background: `linear-gradient(120deg, var(--container-high), var(--container))`, borderRadius: 18, border: `1px solid ${C.outlineVariant}` }} className="mx-4 p-4 mb-4">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <Sparkles size={14} color={C.accent} />
-          <h3 style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 14.5, letterSpacing: 0.3 }}>TODAY'S QUESTS</h3>
+    <div className="mb-3" style={{ background: `linear-gradient(120deg, var(--container-high), var(--container))`, borderRadius: 14, border: `1px solid ${C.outlineVariant}`, overflow: "hidden" }}>
+      <Touchable onClick={() => setOpen((o) => !o)} style={{ display: "block", width: "100%" }}>
+        <div className="flex items-center">
+          {groups.map((g, i) => (
+            <div
+              key={g.key}
+              className="flex-1 flex items-center justify-center gap-1.5"
+              style={{ padding: "8px 4px", borderLeft: i > 0 ? `1px solid ${C.outlineVariant}` : "none" }}
+            >
+              <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 14, color: g.items.length > 0 ? g.color : C.faint }}>
+                {g.items.length}
+              </span>
+              <span style={{ fontFamily: sans, fontWeight: 500, fontSize: 10.5, color: C.onSurfaceVariant, letterSpacing: 0.2 }}>
+                {g.label}
+              </span>
+            </div>
+          ))}
+          <div className="flex items-center" style={{ paddingRight: 10 }}>
+            {open ? <ChevronUp size={13} color={C.faint} /> : <ChevronDown size={13} color={C.faint} />}
+          </div>
         </div>
-        <span style={{ fontFamily: mono, color: C.faint, fontSize: 10.5 }}>Day {idx} · Wk {weekNum}</span>
-      </div>
-      {totalPending === 0 ? (
-        <p style={{ color: C.resolve, fontSize: 13 }}>No quests pending today.</p>
-      ) : (
-        <div className="flex flex-col">
-          {mtPending && (
-            <label className="flex items-center gap-1">
-              <Check2 checked={false} color={C.vitality} onClick={() => set((d) => { d.vitality.muayThai[key] = true; })} />
-              <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>Muay Thai class</span>
-            </label>
-          )}
-          {dailyItems.map(([k, label]) => (
-            <label key={k} className="flex items-center gap-1">
-              <Check2
-                checked={false}
-                color={C.resolve}
-                onClick={() => set((d) => {
-                  if (!d.resolve.dailyLogs[key]) d.resolve.dailyLogs[key] = { wake: false, plan: false, hair: false, teeth: false };
-                  d.resolve.dailyLogs[key][k] = true;
-                })}
-              />
-              <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>{label}</span>
-            </label>
-          ))}
-          {weeklyItems.map(([k, label]) => (
-            <label key={k} className="flex items-center gap-1">
-              <Check2
-                checked={false}
-                color={C.resolve}
-                onClick={() => set((d) => {
-                  if (!d.resolve.weeklyLogs[weekNum]) d.resolve.weeklyLogs[weekNum] = { laundry: false, iron: false };
-                  d.resolve.weeklyLogs[weekNum][k] = true;
-                })}
-              />
-              <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>
-                {label} <span style={{ color: C.faint, fontSize: 11 }}>(this week)</span>
-              </span>
-            </label>
-          ))}
-          {armPending.map(({ si }) => (
-            <label key={`arm-${si}`} className="flex items-center gap-1">
-              <Check2
-                checked={false}
-                color={C.vitality}
-                onClick={() => set((d) => { d.vitality.armWeeks[weekIdx][si] = true; })}
-              />
-              <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>
-                Arm Training <span style={{ color: C.faint, fontSize: 11 }}>(this week)</span>
-              </span>
-            </label>
-          ))}
-          {abPending.map(({ si }) => (
-            <label key={`ab-${si}`} className="flex items-center gap-1">
-              <Check2
-                checked={false}
-                color={C.vitality}
-                onClick={() => set((d) => { d.vitality.abWeeks[weekIdx][si] = true; })}
-              />
-              <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>
-                Ab Training <span style={{ color: C.faint, fontSize: 11 }}>(this week)</span>
-              </span>
-            </label>
-          ))}
+      </Touchable>
+      {open && (
+        <div className="px-3 pb-3" style={{ borderTop: `1px solid ${C.outlineVariant}` }}>
+          {groups.map((g) => {
+            const noneMsg = g.key === "bonus" && (state.resolve.bonusTasks || []).length === 0 ? "No bonus tasks yet." : "All done.";
+            return (
+              <div
+                key={g.key}
+                style={{
+                  marginTop: 10, borderRadius: 14, overflow: "hidden",
+                  border: `1px solid ${mix(g.color, 28)}`,
+                  background: `linear-gradient(160deg, ${mix(g.color, 9)}, transparent 75%)`,
+                }}
+              >
+                <div className="flex items-center gap-2" style={{ padding: "8px 12px", background: mix(g.color, 6) }}>
+                  <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 10.5, color: g.color, letterSpacing: 0.5, textTransform: "uppercase" }}>
+                    {g.label}
+                  </span>
+                  <span style={{ marginLeft: "auto", fontFamily: mono, fontSize: 10.5, color: g.items.length > 0 ? g.color : C.faint }}>
+                    {g.items.length > 0 ? `${g.items.length} left` : "clear"}
+                  </span>
+                </div>
+                {g.items.length === 0 ? (
+                  <div className="flex items-center gap-2" style={{ padding: "10px 12px" }}>
+                    <CheckCircle2 size={14} color={mix(g.color, 65)} />
+                    <span style={{ color: C.onSurfaceVariant, fontSize: 12 }}>{noneMsg}</span>
+                  </div>
+                ) : (
+                  <div className="flex flex-col">
+                    {g.items.map((it, ii) => (
+                      <label
+                        key={it.id}
+                        className="flex items-center gap-2"
+                        style={{ padding: "7px 12px", borderTop: ii > 0 ? `1px solid ${mix(g.color, 12)}` : "none" }}
+                      >
+                        <Check2 checked={false} color={it.color} onClick={it.onClick} />
+                        <span style={{ color: C.onSurface, fontSize: 13, fontWeight: 500 }}>{it.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -1460,7 +1657,7 @@ function RankBadge({ rank, color, xp, bandFrom, bandTo, mode }) {
           <span
             style={{
               fontFamily: sans, fontWeight: 900, lineHeight: 1,
-              fontSize: rank.length > 1 ? 34 : 40,
+              fontSize: 40,
               color,
               letterSpacing: 0.5,
               textShadow: elite ? `0 0 18px ${mix(color, 60)}, 0 0 36px ${mix(color, 33)}` : `0 0 10px ${mix(color, 27)}`,
@@ -1496,8 +1693,8 @@ function RankBadge({ rank, color, xp, bandFrom, bandTo, mode }) {
             {rank === "SS" ? "Top rank reached" : `${Math.round(xp - bandFrom)}/${bandTo - bandFrom} to next rank`}
           </span>
           <div style={{ height: 1, background: C.outlineVariant, margin: "10px 0 8px" }} />
-          <span style={{ fontFamily: mono, fontSize: 9, color: C.faint, letterSpacing: 1, display: "block", marginBottom: 6 }}>ALL RANKS</span>
-          <div className="flex flex-col gap-1.5">
+          <span style={{ fontFamily: mono, fontSize: 9, color: C.faint, letterSpacing: 1 }}>ALL RANKS</span>
+          <div className="flex flex-col gap-1.5" style={{ marginTop: 6 }}>
             {RANK_BANDS.map((b) => {
               const bc = rankColor(b.rank, mode);
               const isCurrent = b.rank === rank;
@@ -1590,7 +1787,9 @@ function LevelCard({ name, onNameChange, overall, totalXP, today, mode }) {
           )}
 
           <div className="flex items-end gap-3" style={{ marginTop: 8 }}>
-            <RankBadge rank={rank} color={rc} xp={xp} bandFrom={bandFrom} bandTo={bandTo} mode={mode} />
+            <RankBadge
+              rank={rank} color={rc} xp={xp} bandFrom={bandFrom} bandTo={bandTo} mode={mode}
+            />
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5">
                 <Calendar size={11} color={C.onSurfaceVariant} />
@@ -1600,7 +1799,7 @@ function LevelCard({ name, onNameChange, overall, totalXP, today, mode }) {
                 <div style={{ height: "100%", width: `${progress * 100}%`, background: rc, boxShadow: `0 0 6px ${mix(rc, 60)}`, borderRadius: 3, transition: "width 0.4s ease, background 0.3s ease" }} />
               </div>
               <span style={{ fontFamily: mono, fontSize: 9.5, color: C.faint }}>
-                {rank === "SS" ? "Top rank reached" : `${Math.round(totalXP - bandFrom)}/${bandTo - bandFrom} XP to next rank`}
+                {rank === "SS" ? "Top rank reached" : `${Math.round(xp - bandFrom)}/${bandTo - bandFrom} XP to next rank`}
               </span>
             </div>
           </div>
@@ -1630,6 +1829,15 @@ function TopAppBar({ syncStatus, onMenu, mode, onToggleTheme, readOnly }) {
     <div className="flex items-center justify-between px-3" style={{ height: 60, flexShrink: 0 }}>
       <div className="flex items-center gap-1.5 pl-1.5">
         <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 16, letterSpacing: 0.5 }}>+ ULTRA</div>
+        <span
+          style={{
+            fontFamily: mono, fontWeight: 700, fontSize: 9.5, letterSpacing: 0.5,
+            color: C.accent, background: mix(C.accent, 16), border: `1px solid ${mix(C.accent, 30)}`,
+            borderRadius: 8, padding: "3px 7px",
+          }}
+        >
+          LEVEL 1
+        </span>
         {readOnly && (
           <span
             style={{
@@ -1666,7 +1874,7 @@ function BottomNav({ tab, setTab, tabs }) {
     <div style={{ flexShrink: 0, padding: "0 12px 12px", background: C.surface }}>
       <div
         style={{
-          height: NAV_H - 12, borderRadius: 12,
+          height: NAV_H - 12, borderRadius: 14,
           background: C.containerHigh,
           border: `1px solid ${C.outlineVariant}`,
           boxShadow: "0 8px 22px rgba(0,0,0,0.28)",
@@ -1681,7 +1889,7 @@ function BottomNav({ tab, setTab, tabs }) {
               <div className="w-full flex flex-col items-center justify-center gap-0.5">
                 <div
                   style={{
-                    padding: "3px 16px", borderRadius: 14,
+                    padding: "3px 16px", borderRadius: 8,
                     background: active ? `${mix(t.color, 13)}` : "transparent",
                     boxShadow: active ? `0 0 10px ${mix(t.color, 27)}` : "none",
                     transition: "background 0.15s ease",
@@ -1736,6 +1944,12 @@ export default function LifeRPG() {
   const [newRead, setNewRead] = useState("");
   const [codesError, setCodesError] = useState(null);
   const [codesSaving, setCodesSaving] = useState(false);
+
+  // "Reset all data" write-code confirmation panel.
+  const [resetPanelOpen, setResetPanelOpen] = useState(false);
+  const [resetCodeInput, setResetCodeInput] = useState("");
+  const [resetCodeError, setResetCodeError] = useState(null);
+  const [resetBusy, setResetBusy] = useState(false);
 
   const dirtyRef = useRef(false);
   useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
@@ -1909,15 +2123,39 @@ export default function LifeRPG() {
       setTimeout(() => setResetArm(false), 4000);
       return;
     }
+    setResetArm(false);
+    setMenuOpen(false);
+    setResetCodeInput("");
+    setResetCodeError(null);
+    setResetPanelOpen(true);
+  }, [readOnly, resetArm]);
+
+  const confirmReset = useCallback(async () => {
+    if (!authConfig?.writeCodeHash) {
+      setResetCodeError("Couldn't verify your write code. Please try again.");
+      return;
+    }
+    setResetBusy(true);
+    const h = await sha256Hex(sanitizeCode(resetCodeInput));
+    if (h !== authConfig.writeCodeHash) {
+      setResetCodeError("Incorrect write code.");
+      setResetBusy(false);
+      return;
+    }
     const initial = defaultState();
     const ref = doc(db, QUESTS_COLLECTION, MAIN_DOC_ID);
-    setDoc(ref, initial).catch(() => setSyncStatus("error"));
+    try {
+      await setDoc(ref, initial);
+    } catch {
+      setSyncStatus("error");
+    }
     setState(initial);
     setDirty(false);
     setSyncStatus("synced");
-    setResetArm(false);
-    setMenuOpen(false);
-  }, [readOnly, resetArm]);
+    setResetBusy(false);
+    setResetPanelOpen(false);
+    setResetCodeInput("");
+  }, [resetCodeInput, authConfig]);
 
   const changeCode = useCallback(() => {
     if (typeof window !== "undefined") localStorage.removeItem(CODE_STORAGE_KEY);
@@ -1981,19 +2219,28 @@ export default function LifeRPG() {
   const currentWeek = clamp(Math.ceil(idx / 7), 1, 13);
   const questLocked = false;
 
+  // Rank-tinted theme: the same rank color that colors the name card's
+  // badge/glow is also pushed down as the app-wide --accent/--glow, so the
+  // whole UI's accent shifts as the player's overall rank climbs.
+  const { rank: appRank } = rankInfo(wScore + vScore + weScore + rScore);
+  const rankTint = rankColor(appRank, mode);
+
   const tabs = [
     { id: "dashboard", label: "Home", icon: Home, color: C.accent },
     { id: "wisdom", label: "Wisdom", icon: BookOpen, color: C.wisdom },
     { id: "vitality", label: "Vitality", icon: Dumbbell, color: C.vitality },
     { id: "wealth", label: "Wealth", icon: Coins, color: C.wealth },
     { id: "resolve", label: "Resolve", icon: ShieldCheck, color: C.resolve },
-    { id: "achievements", label: "Awards", icon: Trophy, color: C.wisdom },
+    { id: "achievements", label: "Awards", icon: Trophy, color: C.accent },
   ];
   const activeColor = tabs.find((t) => t.id === tab)?.color || C.accent;
 
   return (
     <ReadOnlyContext.Provider value={readOnly}>
-    <div className={`theme-${mode}`}>
+    <div
+      className={`theme-${mode}`}
+      style={{ "--accent": rankTint, "--glow": `color-mix(in srgb, ${rankTint} 32%, transparent)` }}
+    >
       <style>{THEME_CSS}</style>
       <div
         style={{
@@ -2130,6 +2377,66 @@ export default function LifeRPG() {
           </>
         )}
 
+        {resetPanelOpen && (
+          <>
+            <div
+              onClick={() => { if (!resetBusy) { setResetPanelOpen(false); setResetCodeError(null); } }}
+              style={{ position: "absolute", inset: 0, zIndex: 30, background: "rgba(0,0,0,0.5)" }}
+            />
+            <div
+              style={{
+                position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+                zIndex: 31, width: "calc(100% - 48px)", maxWidth: 340,
+                background: C.containerHighest, borderRadius: 18, border: `1px solid ${mix(C.danger, 30)}`,
+                boxShadow: "0 12px 32px rgba(0,0,0,0.5)", padding: 20,
+              }}
+            >
+              <div style={{ fontFamily: sans, fontWeight: 800, fontSize: 15.5, color: C.danger, marginBottom: 4 }}>
+                Reset all data
+              </div>
+              <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 14, lineHeight: 1.4 }}>
+                This permanently erases all progress and can't be undone. Enter your write code to confirm.
+              </p>
+              <label style={{ color: C.faint, fontSize: 10.5, fontFamily: sans, fontWeight: 600 }}>WRITE CODE</label>
+              <input
+                type="password"
+                autoFocus
+                value={resetCodeInput}
+                onChange={(e) => setResetCodeInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") confirmReset(); }}
+                placeholder="Enter your write code"
+                style={{
+                  width: "100%", background: C.containerHigh, border: `1px solid ${C.outline}`, color: C.onSurface,
+                  fontFamily: mono, fontSize: 13, borderRadius: 12, padding: "10px 12px", margin: "6px 0 12px", outline: "none",
+                }}
+              />
+              {resetCodeError && (
+                <p style={{ color: C.danger, fontSize: 11.5, marginBottom: 10 }}>{resetCodeError}</p>
+              )}
+              <div className="flex items-center gap-2" style={{ marginTop: 4 }}>
+                <Touchable
+                  onClick={() => { if (!resetBusy) { setResetPanelOpen(false); setResetCodeError(null); } }}
+                  style={{ flex: 1, padding: "10px 0", borderRadius: 12, border: `1px solid ${C.outline}`, display: "flex", alignItems: "center", justifyContent: "center" }}
+                >
+                  <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>Cancel</span>
+                </Touchable>
+                <Touchable
+                  onClick={confirmReset}
+                  disabled={resetBusy || !resetCodeInput}
+                  style={{
+                    flex: 1, padding: "10px 0", borderRadius: 12, background: C.danger, color: "#fff",
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                    fontWeight: 700, fontSize: 13, opacity: resetBusy || !resetCodeInput ? 0.6 : 1,
+                  }}
+                >
+                  {resetBusy && <Loader2 size={14} className="md-spin" />}
+                  {resetBusy ? "Resetting…" : "Confirm reset"}
+                </Touchable>
+              </div>
+            </div>
+          </>
+        )}
+
         <div className="px-1 pt-1">
           <LevelCard
             name={state.profile?.name || ""}
@@ -2152,9 +2459,14 @@ export default function LifeRPG() {
           {tab === "dashboard" && (
             <div className="pb-4">
               <div className="px-4 pt-3">
+                <QuestBar state={state} set={update} today={today} />
+                <AttrRow icon={BookOpen} label="Wisdom" score={wScore} color={C.wisdom} tagline="Books & strategic thinking" onClick={() => setTab("wisdom")} />
+                <AttrRow icon={Dumbbell} label="Vitality" score={vScore} color={C.vitality} tagline="Muay Thai, training, treks" onClick={() => setTab("vitality")} />
+                <AttrRow icon={Coins} label="Wealth" score={weScore} color={C.wealth} tagline="Investing & saving" onClick={() => setTab("wealth")} />
+                <AttrRow icon={ShieldCheck} label="Resolve" score={rScore} color={C.resolve} tagline="Daily discipline" onClick={() => setTab("resolve")} />
                 <Touchable
                   onClick={() => setTab("achievements")}
-                  style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 16, display: "block", marginBottom: 14 }}
+                  style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 16, display: "block", marginTop: 4 }}
                 >
                   <div className="flex items-center gap-3 px-4 py-3">
                     <Hex size={30} color={C.accent}>
@@ -2169,12 +2481,7 @@ export default function LifeRPG() {
                     <ChevronRight size={16} color={C.faint} style={{ marginLeft: "auto" }} />
                   </div>
                 </Touchable>
-                <AttrRow icon={BookOpen} label="Wisdom" score={wScore} color={C.wisdom} tagline="Books & strategic thinking" onClick={() => setTab("wisdom")} />
-                <AttrRow icon={Dumbbell} label="Vitality" score={vScore} color={C.vitality} tagline="Muay Thai, training, treks" onClick={() => setTab("vitality")} />
-                <AttrRow icon={Coins} label="Wealth" score={weScore} color={C.wealth} tagline="Investing & saving" onClick={() => setTab("wealth")} />
-                <AttrRow icon={ShieldCheck} label="Resolve" score={rScore} color={C.resolve} tagline="Daily discipline" onClick={() => setTab("resolve")} />
               </div>
-              <TodayQuests state={state} set={update} today={today} />
             </div>
           )}
           {tab === "wisdom" && <WisdomTab s={state.wisdom} set={update} />}
@@ -2218,7 +2525,7 @@ export default function LifeRPG() {
           )}
         </div>
 
-        <BottomNav tab={tab} setTab={setTab} tabs={tabs} />
+        <BottomNav tab={tab} setTab={setTab} tabs={tabs.filter((t) => t.id !== "achievements")} />
       </div>
     </div>
     </ReadOnlyContext.Provider>
