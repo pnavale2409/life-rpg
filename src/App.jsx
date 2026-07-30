@@ -1123,6 +1123,7 @@ function ResolveTab({ s, set, locked, wealth }) {
    offset the Discipline Allowance's negative points in Resolve.
 --------------------------------------------------------------- */
 function BonusTasksMission({ s, set }) {
+  const readOnly = useContext(ReadOnlyContext);
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
@@ -1159,8 +1160,9 @@ function BonusTasksMission({ s, set }) {
       </p>
 
       <div style={{ marginBottom: 14 }}>
-        {!adding ? (
+        {readOnly ? null : !adding ? (
           <Touchable
+            writeAction
             onClick={() => setAdding(true)}
             style={{
               background: C.resolve, borderRadius: 10, padding: "9px 0",
@@ -1204,6 +1206,7 @@ function BonusTasksMission({ s, set }) {
                 <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Cancel</span>
               </Touchable>
               <Touchable
+                writeAction
                 onClick={addTask}
                 style={{
                   flex: 1, background: C.resolve, borderRadius: 10, padding: "9px 0",
@@ -1248,8 +1251,9 @@ function BonusTasksMission({ s, set }) {
                   )}
                 </div>
                 <Touchable
+                  writeAction
                   onClick={() => set((d) => { d.resolve.bonusTasks = d.resolve.bonusTasks.filter((x) => x.id !== t.id); })}
-                  style={{ padding: 4, flexShrink: 0 }}
+                  style={{ padding: 4, flexShrink: 0, opacity: readOnly ? 0.5 : 1 }}
                 >
                   <Trash2 size={15} color={C.faint} />
                 </Touchable>
