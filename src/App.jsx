@@ -3346,6 +3346,10 @@ export default function LifeRPG() {
   const [state, setState] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("dashboard");
+  const contentScrollRef = useRef(null);
+  useEffect(() => {
+    if (contentScrollRef.current) contentScrollRef.current.scrollTop = 0;
+  }, [tab]);
   const [dirty, setDirty] = useState(false);
   const [syncStatus, setSyncStatus] = useState("synced");
   const [resetArm, setResetArm] = useState(false);
@@ -3973,8 +3977,10 @@ export default function LifeRPG() {
           <span style={{ fontFamily: mono, color: C.faint, fontSize: 11 }}>Week {currentWeek}</span>
         </div>
 
-        {/* scrollable content */}
-        <div className="flex-1 overflow-y-auto" style={{ position: "relative" }}>
+        {/* scrollable content — reset to top on every tab switch, since this
+            single container is reused across all tabs and would otherwise
+            keep whatever scroll position the previous tab was left at. */}
+        <div ref={contentScrollRef} className="flex-1 overflow-y-auto" style={{ position: "relative" }}>
           {tab === "dashboard" && (
             <div className="pb-4">
               <div className="px-4 pt-3">
