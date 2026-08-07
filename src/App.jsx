@@ -375,6 +375,105 @@ function resolveScore(s) {
 }
 
 /* ---------------------------------------------------------------
+   AUTOMATIC LEAVE COVERAGE (Wake-up / Muay Thai)
+   Every missed day — whether checked "Wake up by 7:00 AM" once its
+   7 AM has passed, or a Muay Thai class once that class day is over —
+   is treated as covered for scoring, full stop: it always reads as
+   done, so you never lose the underlying 0.2 (wake) or per-class
+   (Muay Thai) credit for it. The cost of "using a leave" lives
+   entirely in the Discipline Allowance deduction (1 pt per miss
+   beyond the 20 wake / 6 MT allowance) — which bonusTasks can offset,
+   so someone with enough bonus points can miss beyond the cap and
+   still land on a perfect score. This only adjusts SCORING (via the
+   "effective" copies below); the raw dailyLogs/muayThai booleans are
+   never modified, so achievements that care about real attendance
+   (fed the same effective state) still reflect covered days as done,
+   consistent with what the score shows.
+--------------------------------------------------------------- */
+const WAKE_CUTOFF_HOUR = 7;
+const WAKE_LEAVE_ALLOWANCE = 20;
+const MT_LEAVE_ALLOWANCE = 6;
+const QUEST_DATES = (() => {
+  const out = [];
+  let d = new Date(QUEST_START);
+  while (d <= QUEST_END) {
+    out.push(fmtDate(d));
+    d.setDate(d.getDate() + 1);
+  }
+  return out;
+})();
+
+function wakeAutoStats(dailyLogs, now) {
+  const nowKey = fmtDate(now);
+  const cutoffPassedToday = now.getHours() >= WAKE_CUTOFF_HOUR;
+  const missedDates = [];
+  for (const ds of QUEST_DATES) {
+    if (ds > nowKey) break;
+    if (ds === nowKey && !cutoffPassedToday) continue;
+    if (!dailyLogs[ds]?.wake) missedDates.push(ds);
+  }
+  return { misses: missedDates.length, missedDates };
+}
+
+function mtAutoStats(muayThai, now) {
+  const nowKey = fmtDate(now);
+  const missedDates = [];
+  for (const ds of MT_DATES) {
+    if (ds >= nowKey) break;
+    if (!muayThai[ds]) missedDates.push(ds);
+  }
+  return { misses: missedDates.length, missedDates };
+}
+
+/* Returns a resolve slice for SCORING/DISPLAY where every past wake
+   miss reads as done (see header comment), and mtLeaves/wakeBreaks
+   reflect the live auto miss count that drives the deduction. Also
+   carries wakeMissedDates so the UI can show which specific days were
+   auto-covered, and which of those were within the free allowance vs.
+   past it (costing a deduction point). Never persisted — build fresh
+   from raw state each render. */
+function effectiveResolve(resolveState, vitalityState, now) {
+  const wake = wakeAutoStats(resolveState.dailyLogs, now);
+  const mt = mtAutoStats(vitalityState.muayThai, now);
+  let dailyLogs = resolveState.dailyLogs;
+  if (wake.misses > 0) {
+    dailyLogs = { ...dailyLogs };
+    wake.missedDates.forEach((ds) => {
+      dailyLogs[ds] = { ...(dailyLogs[ds] || {}), wake: true };
+    });
+  }
+  return {
+    ...resolveState,
+    dailyLogs,
+    wakeBreaks: wake.misses,
+    mtLeaves: mt.misses,
+    wakeMissedDates: wake.missedDates,
+  };
+}
+
+/* Same rule as wake-up: every missed Muay Thai class always reads as
+   attended for scoring — the underlying per-class Vitality credit is
+   never lost. The only cost of going past the 6-class allowance is the
+   Resolve-side mtLeaves deduction (1 pt per excess miss, offsettable
+   by bonusTasks) computed in effectiveResolve. */
+function effectiveVitality(vitalityState, now) {
+  const mt = mtAutoStats(vitalityState.muayThai, now);
+  if (mt.misses === 0) return vitalityState;
+  const muayThai = { ...vitalityState.muayThai };
+  mt.missedDates.forEach((ds) => { muayThai[ds] = true; });
+  return { ...vitalityState, muayThai, mtMissedDates: mt.missedDates };
+}
+
+/* Achievements must judge the same "leave-adjusted" picture the score
+   screens show, not the raw logs — otherwise a leave-covered day that
+   reads as full credit on the Resolve/Vitality tabs (and in the score
+   used to unlock "reach 100" achievements) wouldn't count toward
+   achievements like Iron Will / Perfect Day / Disciplined at all. */
+function achievementState(state, effVitality, effResolve) {
+  return { ...state, vitality: effVitality, resolve: effResolve };
+}
+
+/* ---------------------------------------------------------------
    ACHIEVEMENTS
 --------------------------------------------------------------- */
 function perfectDaysCount(dailyLogs) {
@@ -392,7 +491,7 @@ const ACHIEVEMENTS = [
   { id: "w5", attr: "wisdom", label: "Wisdom Master", desc: "Reach 100/100 Wisdom.", check: (s) => wisdomScore(s.wisdom) >= 100 },
   { id: "v1", attr: "vitality", label: "First Class", desc: "Attend your first Muay Thai class.", check: (s) => Object.values(s.vitality.muayThai).some(Boolean) },
   { id: "v2", attr: "vitality", label: "Halfway There", desc: "Attend 33+ Muay Thai classes.", check: (s) => Object.values(s.vitality.muayThai).filter(Boolean).length >= 33 },
-  { id: "v3", attr: "vitality", label: "Iron Will", desc: "Attend every Muay Thai class.", check: (s) => Object.values(s.vitality.muayThai).filter(Boolean).length >= MT_TOTAL },
+  { id: "v3", attr: "vitality", label: "Iron Will", desc: "Attend every Muay Thai class (leaves count).", check: (s) => Object.values(s.vitality.muayThai).filter(Boolean).length >= MT_TOTAL },
   { id: "v4", attr: "vitality", label: "Arm Day", desc: "Complete every Arm Training session.", check: (s) => Object.values(s.vitality.armWeeks).every((w) => w.every(Boolean)) },
   { id: "v5", attr: "vitality", label: "Core Strength", desc: "Complete every Ab Training session.", check: (s) => Object.values(s.vitality.abWeeks).every((w) => w.every(Boolean)) },
   { id: "v6", attr: "vitality", label: "Trailblazer", desc: "Complete your first trek.", check: (s) => s.vitality.treks >= 1 },
@@ -407,7 +506,7 @@ const ACHIEVEMENTS = [
   { id: "r2", attr: "resolve", label: "Steady Streak", desc: "Log 14 perfect days.", check: (s) => perfectDaysCount(s.resolve.dailyLogs) >= 14 },
   { id: "r3", attr: "resolve", label: "Perfect Week", desc: "Laundry and iron done in the same week.", check: (s) => fullWeeksCount(s.resolve.weeklyLogs) >= 1 },
   { id: "r4", attr: "resolve", label: "Fresh Linen", desc: "Change bedsheets all 3 times.", check: (s) => s.resolve.bedsheets >= 3 },
-  { id: "r5", attr: "resolve", label: "Disciplined", desc: "Reach 100/100 Resolve.", check: (s) => resolveScore(s.resolve) >= 100 },
+  { id: "r5", attr: "resolve", label: "Disciplined", desc: "Reach 100/100 Resolve.", check: (s) => resolveScore(s.resolve) >= 100 }, // s.resolve is leave-adjusted, see achievementState()
   { id: "o1", attr: "overall", label: "Quarter Quest", desc: "Reach 25 overall average.", check: (s, o) => o >= 25 },
   { id: "o2", attr: "overall", label: "Halfway Hero", desc: "Reach 50 overall average.", check: (s, o) => o >= 50 },
   { id: "o3", attr: "overall", label: "Home Stretch", desc: "Reach 75 overall average.", check: (s, o) => o >= 75 },
@@ -806,7 +905,7 @@ function currentWeekNum() {
 
 /* Muay Thai attendance, grouped into a per-week dropdown/accordion so the
    list doesn't dump all 65 dates on screen at once. */
-function MuayThaiGrid({ value, onToggle, color }) {
+function MuayThaiGrid({ value, onToggle, color, freeCovered, costlyCovered }) {
   const [openWeeks, setOpenWeeks] = useState(() => {
     const arr = Array(13).fill(false);
     arr[currentWeekNum() - 1] = true;
@@ -837,12 +936,18 @@ function MuayThaiGrid({ value, onToggle, color }) {
             </Touchable>
             {open && (
               <div className="flex gap-2 flex-wrap px-3 pb-3">
-                {dates.map((ds) => (
-                  <label key={ds} className="flex items-center gap-0.5">
-                    <Check2 checked={!!value[ds]} color={color} onClick={() => onToggle(ds)} />
-                    <span style={{ fontFamily: mono, fontSize: 9.5, color: C.faint }}>{shortDay(ds)}</span>
-                  </label>
-                ))}
+                {dates.map((ds) => {
+                  const free = !value[ds] && freeCovered?.has(ds);
+                  const costly = !value[ds] && costlyCovered?.has(ds);
+                  return (
+                    <label key={ds} className="flex items-center gap-0.5">
+                      <Check2 checked={!!value[ds]} color={color} onClick={() => onToggle(ds)} />
+                      <span style={{ fontFamily: mono, fontSize: 9.5, color: free ? color : costly ? C.danger : C.faint }}>
+                        {shortDay(ds)}{free ? "*" : costly ? "†" : ""}
+                      </span>
+                    </label>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -899,20 +1004,30 @@ function LockWrap({ locked, color, children }) {
   );
 }
 
-function VitalityTab({ s, set, locked }) {
-  const score = vitalityScore(s);
+function VitalityTab({ s, effective, set, locked }) {
+  const eff = effective || s;
+  const score = vitalityScore(eff);
+  const missedDates = eff.mtMissedDates || [];
+  const freeCovered = new Set(missedDates.slice(0, MT_LEAVE_ALLOWANCE));
+  const costlyCovered = new Set(missedDates.slice(MT_LEAVE_ALLOWANCE));
   return (
     <div className="pb-4">
       <ScreenHeader title="Vitality" sub="Physical strength, endurance and health." color={C.vitality} score={score} />
       <LockWrap locked={locked} color={C.vitality}>
-        <Mission title="Muay Thai" points={65} earned={Object.values(s.muayThai).filter(Boolean).length} color={C.vitality}>
+        <Mission title="Muay Thai" points={65} earned={Object.values(eff.muayThai).filter(Boolean).length} color={C.vitality}>
           <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 10 }}>
             Weekday classes, 3 Aug – 30 Oct.{" "}
             <span style={{ fontFamily: mono, color: C.vitality }}>
-              {Object.values(s.muayThai).filter(Boolean).length} / {MT_TOTAL}
+              {Object.values(eff.muayThai).filter(Boolean).length} / {MT_TOTAL}
             </span>
+            {freeCovered.size > 0 && (
+              <span style={{ color: C.faint }}> · {freeCovered.size} covered by leave</span>
+            )}
+            {costlyCovered.size > 0 && (
+              <span style={{ color: C.danger }}> · {costlyCovered.size} leave used (−1 pt each)</span>
+            )}
           </p>
-          <MuayThaiGrid value={s.muayThai} color={C.vitality} onToggle={(ds) => set((d) => { d.vitality.muayThai[ds] = !d.vitality.muayThai[ds]; })} />
+          <MuayThaiGrid value={s.muayThai} freeCovered={freeCovered} costlyCovered={costlyCovered} color={C.vitality} onToggle={(ds) => set((d) => { d.vitality.muayThai[ds] = !d.vitality.muayThai[ds]; })} />
         </Mission>
         <Mission
           title="Arm Training"
@@ -1005,14 +1120,18 @@ function WealthTab({ s, set, locked }) {
 /* ---------------------------------------------------------------
    RESOLVE TAB
 --------------------------------------------------------------- */
-function ResolveTab({ s, set, locked, wealth }) {
-  const score = resolveScore(s);
+function ResolveTab({ s, effective, set, locked, wealth }) {
+  const eff = effective || s;
+  const score = resolveScore(eff);
   const [viewDate, setViewDate] = useState(() => {
     const t = dateOnly(new Date());
     return t >= QUEST_START && t <= QUEST_END ? t : QUEST_START;
   });
   const key = fmtDate(viewDate);
   const log = s.dailyLogs[key] || { wake: false, plan: false, hair: false, teeth: false };
+  const wakeMissRank = eff.wakeMissedDates ? eff.wakeMissedDates.indexOf(key) : -1;
+  const wakeLeaveCovered = wakeMissRank !== -1;
+  const wakeLeaveFree = wakeLeaveCovered && wakeMissRank < WAKE_LEAVE_ALLOWANCE;
   const idx = dayIndex(viewDate);
   const weekNum = clamp(Math.ceil(idx / 7), 1, 13);
   const wlog = s.weeklyLogs[weekNum] || { laundry: false, iron: false };
@@ -1035,12 +1154,13 @@ function ResolveTab({ s, set, locked, wealth }) {
     ["mtLeaves", "Muay Thai leaves", 6],
     ["wakeBreaks", "Wake-up breaks", 20],
   ];
-  const totalDeduction = allowanceItems.reduce((sum, [k, , allow]) => sum + Math.max(0, s[k] - allow), 0);
+  const autoAllowanceKeys = ["mtLeaves", "wakeBreaks"];
+  const totalDeduction = allowanceItems.reduce((sum, [k, , allow]) => sum + Math.max(0, eff[k] - allow), 0);
   const bonusTasks = s.bonusTasks || [];
   const bonusPoints = bonusTasks.filter((t) => t.completed).length;
   const netDeduction = Math.max(0, totalDeduction - bonusPoints);
 
-  const dailyEarned = Object.values(s.dailyLogs).reduce(
+  const dailyEarned = Object.values(eff.dailyLogs).reduce(
     (sum, l) => sum + (l.wake ? 0.2 : 0) + (l.plan ? 0.2 : 0) + (l.hair ? 0.2 : 0) + (l.teeth ? 0.2 : 0),
     0
   );
@@ -1078,6 +1198,14 @@ function ResolveTab({ s, set, locked, wealth }) {
                   })}
                 />
                 <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>{label} (0.2)</span>
+                {k === "wake" && wakeLeaveCovered && (
+                  <span style={{
+                    fontFamily: mono, fontSize: 9.5, color: wakeLeaveFree ? C.faint : C.danger,
+                    background: C.containerHigh, borderRadius: 6, padding: "1px 6px", marginLeft: 2,
+                  }}>
+                    {wakeLeaveFree ? "covered by leave" : "leave used (−1 pt)"}
+                  </span>
+                )}
               </label>
             ))}
           </div>
@@ -1117,11 +1245,12 @@ function ResolveTab({ s, set, locked, wealth }) {
 
         <Mission title="Discipline Allowance" points="—" color={C.resolve}>
           <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 10 }}>
-            Each occurrence past the allowance costs 1 point.
+            Each occurrence past the allowance costs 1 point. Muay Thai leaves and wake-up breaks are tracked automatically.
           </p>
           <div className="flex flex-col gap-3">
             {allowanceItems.map(([k, label, allow]) => {
-              const deduction = Math.max(0, s[k] - allow);
+              const auto = autoAllowanceKeys.includes(k);
+              const deduction = Math.max(0, eff[k] - allow);
               return (
                 <div key={k} className="flex items-center justify-between">
                   <span style={{ color: C.onSurfaceVariant, fontSize: 12.5 }}>
@@ -1133,7 +1262,18 @@ function ResolveTab({ s, set, locked, wealth }) {
                         −{deduction} pt{deduction === 1 ? "" : "s"}
                       </span>
                     )}
-                    <Counter value={s[k]} max={allow + 20} color={deduction > 0 ? C.danger : C.resolve} onChange={(v) => set((d) => { d.resolve[k] = v; })} />
+                    {auto ? (
+                      <span
+                        style={{
+                          fontFamily: mono, fontSize: 13, fontWeight: 700, minWidth: 28, textAlign: "center",
+                          color: deduction > 0 ? C.danger : C.resolve,
+                        }}
+                      >
+                        {eff[k]}
+                      </span>
+                    ) : (
+                      <Counter value={s[k]} max={allow + 20} color={deduction > 0 ? C.danger : C.resolve} onChange={(v) => set((d) => { d.resolve[k] = v; })} />
+                    )}
                   </div>
                 </div>
               );
@@ -1355,6 +1495,9 @@ function BonusTasksMission({ s, set }) {
    ACHIEVEMENTS TAB
 --------------------------------------------------------------- */
 function AchievementsTab({ state, overall }) {
+  // `state` here is already the leave-adjusted achievement state (see
+  // achievementState() / the caller in App), so checks like "Iron Will"
+  // or "Disciplined" correctly count leave-covered days.
   const unlockedIds = new Set(ACHIEVEMENTS.filter((a) => a.check(state, overall)).map((a) => a.id));
   const groups = [
     { key: "wisdom", label: "Wisdom", color: C.wisdom },
@@ -3528,11 +3671,16 @@ export default function LifeRPG() {
   }
 
   const today = new Date();
+  const effVitality = effectiveVitality(state.vitality, today);
+  const effResolve = effectiveResolve(state.resolve, state.vitality, today);
   const wScore = wisdomScore(state.wisdom);
-  const vScore = vitalityScore(state.vitality);
+  const vScore = vitalityScore(effVitality);
   const weScore = wealthScore(state.wealth);
-  const rScore = resolveScore(state.resolve);
+  const rScore = resolveScore(effResolve);
   const overall = (wScore + vScore + weScore + rScore) / 4;
+  // Leave-adjusted state for achievement checks, so unlocks match what
+  // the score screens actually show (see achievementState()).
+  const achieveState = achievementState(state, effVitality, effResolve);
   const idx = clamp(dayIndex(today), 1, TOTAL_DAYS);
   const currentWeek = clamp(Math.ceil(idx / 7), 1, 13);
   const questLocked = false;
@@ -3548,7 +3696,7 @@ export default function LifeRPG() {
     : 0;
 
   const todayPlannerTasks = state.planner?.days?.[todayKey] || [];
-  const todayPlannerDone = todayPlannerTasks.filter((t) => t.completed).length;
+  const todayPlannerRemaining = todayPlannerTasks.filter((t) => !t.completed).length;
 
   // Rank-tinted theme: the same rank color that colors the name card's
   // badge/glow is also pushed down as the app-wide --accent/--glow, so the
@@ -3792,7 +3940,16 @@ export default function LifeRPG() {
               <DashDuoCard
                 icon={Utensils}
                 label="Diet"
-                metric={todayDietPlan ? `${Math.round(todayProtein)}/${Math.round(todayProteinTarget)}g` : "0g"}
+                metric={
+                  todayDietPlan ? (
+                    <>
+                      {Math.round(todayProtein)}
+                      <span style={{ fontSize: 9, fontWeight: 600, opacity: 0.65 }}>/{Math.round(todayProteinTarget)}g</span>
+                    </>
+                  ) : (
+                    "0g"
+                  )
+                }
                 sub="protein"
                 onClick={() => { if (!readOnly) setTab("diet"); }}
                 variant="solid"
@@ -3801,8 +3958,8 @@ export default function LifeRPG() {
               <DashDuoCard
                 icon={ListTodo}
                 label="Planner"
-                metric={todayPlannerTasks.length ? `${todayPlannerDone}/${todayPlannerTasks.length}` : "0"}
-                sub="tasks today"
+                metric={`${todayPlannerRemaining}`}
+                sub="tasks remaining"
                 onClick={() => { if (!readOnly) setTab("planner"); }}
                 locked={readOnly}
               />
@@ -3853,7 +4010,7 @@ export default function LifeRPG() {
                     </Hex>
                     <span style={{ color: C.onSurfaceVariant, fontSize: 12.5 }}>
                       <span style={{ color: C.onSurface, fontFamily: mono }}>
-                        {ACHIEVEMENTS.filter((a) => a.check(state, overall)).length} / {ACHIEVEMENTS.length}
+                        {ACHIEVEMENTS.filter((a) => a.check(achieveState, overall)).length} / {ACHIEVEMENTS.length}
                       </span>{" "}
                       achievements unlocked
                     </span>
@@ -3864,10 +4021,10 @@ export default function LifeRPG() {
             </div>
           )}
           {tab === "wisdom" && <WisdomTab s={state.wisdom} set={update} />}
-          {tab === "vitality" && <VitalityTab s={state.vitality} set={update} locked={questLocked} />}
+          {tab === "vitality" && <VitalityTab s={state.vitality} effective={effVitality} set={update} locked={questLocked} />}
           {tab === "wealth" && <WealthTab s={state.wealth} set={update} locked={questLocked} />}
-          {tab === "resolve" && <ResolveTab s={state.resolve} set={update} locked={questLocked} wealth={state.wealth} />}
-          {tab === "achievements" && <AchievementsTab state={state} overall={overall} />}
+          {tab === "resolve" && <ResolveTab s={state.resolve} effective={effResolve} set={update} locked={questLocked} wealth={state.wealth} />}
+          {tab === "achievements" && <AchievementsTab state={achieveState} overall={overall} />}
           {tab === "diet" && (readOnly ? <RestrictedTab label="Diet" /> : <DietTab s={state.diet} set={update} />)}
           {tab === "planner" && (readOnly ? <RestrictedTab label="Planner" /> : <PlannerTab s={state.planner} set={update} />)}
           {tab === "calendar" && <CalendarTab state={state} set={update} />}
