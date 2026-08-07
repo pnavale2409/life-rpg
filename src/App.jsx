@@ -669,10 +669,10 @@ function DashDuoCard({ icon: Icon, label, metric, sub, onClick, variant = "subtl
         position: "relative", overflow: "hidden", display: "block",
         background: solid
           ? `linear-gradient(150deg, ${mix(C.accent, 72)}, ${mix(C.accent, 44)})`
-          : `linear-gradient(-20deg, ${mix(C.accent, 16)}, ${mix(C.accent, 4)})`,
-        border: `1px solid ${mix(C.accent, solid ? 80 : 26)}`,
+          : `linear-gradient(-20deg, ${mix(C.accent, 8)}, ${mix(C.accent, 2)})`,
+        border: `1px solid ${mix(C.accent, solid ? 80 : 14)}`,
         borderRadius: 10,
-        boxShadow: solid ? `0 4px 18px ${mix(C.accent, 44)}` : `0 3px 10px ${mix(C.accent, 8)}`,
+        boxShadow: solid ? `0 4px 18px ${mix(C.accent, 44)}` : `0 3px 10px ${mix(C.accent, 4)}`,
       }}
     >
       <div className="flex items-center gap-2 px-2.5 py-2">
@@ -3786,8 +3786,8 @@ export default function LifeRPG() {
           />
         </div>
 
-        <div className="px-4 pt-2">
-          <div className="grid grid-cols-2 gap-2" style={{ marginBottom: 6 }}>
+        <div className="pt-2">
+          <div className="grid grid-cols-2 gap-2 mx-4" style={{ marginBottom: 6 }}>
             <DashDuoCard
               icon={Utensils}
               label="Diet"
