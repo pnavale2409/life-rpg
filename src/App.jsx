@@ -668,11 +668,11 @@ function DashDuoCard({ icon: Icon, label, metric, sub, onClick, variant = "subtl
       style={{
         position: "relative", overflow: "hidden", display: "block",
         background: solid
-          ? `linear-gradient(150deg, ${mix(C.accent, 90)}, ${mix(C.accent, 55)})`
+          ? `linear-gradient(150deg, ${mix(C.accent, 72)}, ${mix(C.accent, 44)})`
           : `linear-gradient(-20deg, ${mix(C.accent, 16)}, ${mix(C.accent, 4)})`,
-        border: `1px solid ${mix(C.accent, solid ? 100 : 26)}`,
+        border: `1px solid ${mix(C.accent, solid ? 80 : 26)}`,
         borderRadius: 10,
-        boxShadow: solid ? `0 4px 18px ${mix(C.accent, 55)}` : `0 3px 10px ${mix(C.accent, 8)}`,
+        boxShadow: solid ? `0 4px 18px ${mix(C.accent, 44)}` : `0 3px 10px ${mix(C.accent, 8)}`,
       }}
     >
       <div className="flex items-center gap-2 px-2.5 py-2">
@@ -3797,7 +3797,6 @@ export default function LifeRPG() {
           {tab === "dashboard" && (
             <div className="pb-4">
               <div className="px-4 pt-3">
-                <QuestBar state={state} set={update} today={today} />
                 <div className="grid grid-cols-2 gap-2" style={{ marginBottom: 10 }}>
                   <DashDuoCard
                     icon={Utensils}
@@ -3817,6 +3816,7 @@ export default function LifeRPG() {
                     locked={readOnly}
                   />
                 </div>
+                <QuestBar state={state} set={update} today={today} />
                 <AttrRow icon={BookOpen} label="Wisdom" score={wScore} color={C.wisdom} tagline="Books & strategic thinking" onClick={() => setTab("wisdom")} />
                 <AttrRow icon={Dumbbell} label="Vitality" score={vScore} color={C.vitality} tagline="Muay Thai, training, treks" onClick={() => setTab("vitality")} />
                 <AttrRow icon={Coins} label="Wealth" score={weScore} color={C.wealth} tagline="Investing & saving" onClick={() => setTab("wealth")} />
