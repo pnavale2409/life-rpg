@@ -3022,7 +3022,7 @@ function LevelCard({ name, onNameChange, overall, totalXP, today, mode }) {
 
   return (
     <div
-      className="mx-4 mb-1"
+      className="mx-3 mb-1"
       style={{
         position: "relative",
         background: `linear-gradient(160deg, var(--container-high) 0%, var(--container) 65%)`,
