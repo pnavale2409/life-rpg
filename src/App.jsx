@@ -3786,6 +3786,28 @@ export default function LifeRPG() {
           />
         </div>
 
+        <div className="px-4 pt-2">
+          <div className="grid grid-cols-2 gap-2" style={{ marginBottom: 6 }}>
+            <DashDuoCard
+              icon={Utensils}
+              label="Diet"
+              metric={todayDietPlan ? `${Math.round(todayProtein)}/${Math.round(todayProteinTarget)}g` : "0g"}
+              sub="protein"
+              onClick={() => { if (!readOnly) setTab("diet"); }}
+              variant="solid"
+              locked={readOnly}
+            />
+            <DashDuoCard
+              icon={ListTodo}
+              label="Planner"
+              metric={todayPlannerTasks.length ? `${todayPlannerDone}/${todayPlannerTasks.length}` : "0"}
+              sub="tasks today"
+              onClick={() => { if (!readOnly) setTab("planner"); }}
+              locked={readOnly}
+            />
+          </div>
+        </div>
+
         <QuestStrip today={today} />
         <div className="px-4 pb-1 flex items-center justify-between" style={{ flexShrink: 0 }}>
           <span style={{ fontFamily: mono, color: C.faint, fontSize: 11 }}>Day {idx} / 91</span>
@@ -3797,25 +3819,6 @@ export default function LifeRPG() {
           {tab === "dashboard" && (
             <div className="pb-4">
               <div className="px-4 pt-3">
-                <div className="grid grid-cols-2 gap-2" style={{ marginBottom: 10 }}>
-                  <DashDuoCard
-                    icon={Utensils}
-                    label="Diet"
-                    metric={todayDietPlan ? `${Math.round(todayProtein)}/${Math.round(todayProteinTarget)}g` : "0g"}
-                    sub="protein"
-                    onClick={() => { if (!readOnly) setTab("diet"); }}
-                    variant="solid"
-                    locked={readOnly}
-                  />
-                  <DashDuoCard
-                    icon={ListTodo}
-                    label="Planner"
-                    metric={todayPlannerTasks.length ? `${todayPlannerDone}/${todayPlannerTasks.length}` : "0"}
-                    sub="tasks today"
-                    onClick={() => { if (!readOnly) setTab("planner"); }}
-                    locked={readOnly}
-                  />
-                </div>
                 <QuestBar state={state} set={update} today={today} />
                 <AttrRow icon={BookOpen} label="Wisdom" score={wScore} color={C.wisdom} tagline="Books & strategic thinking" onClick={() => setTab("wisdom")} />
                 <AttrRow icon={Dumbbell} label="Vitality" score={vScore} color={C.vitality} tagline="Muay Thai, training, treks" onClick={() => setTab("vitality")} />
