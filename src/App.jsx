@@ -671,7 +671,7 @@ function DashDuoCard({ icon: Icon, label, metric, sub, onClick, variant = "subtl
           ? `linear-gradient(150deg, ${mix(C.accent, 72)}, ${mix(C.accent, 44)})`
           : `linear-gradient(-20deg, ${mix(C.accent, 8)}, ${mix(C.accent, 2)})`,
         border: `1px solid ${mix(C.accent, solid ? 80 : 14)}`,
-        borderRadius: 10,
+        borderRadius: 8,
         boxShadow: solid ? `0 4px 18px ${mix(C.accent, 44)}` : `0 3px 10px ${mix(C.accent, 4)}`,
       }}
     >
@@ -3027,14 +3027,14 @@ function LevelCard({ name, onNameChange, overall, totalXP, today, mode }) {
         position: "relative",
         background: `linear-gradient(160deg, var(--container-high) 0%, var(--container) 65%)`,
         border: `1px solid ${mix(rc, 25)}`,
-        borderRadius: 20,
+        borderRadius: 14,
         boxShadow: `inset 0 1px 0 ${mix(rc, 13)}, 0 1px 0 ${C.outlineVariant}`,
         transition: "border-color 0.3s ease, box-shadow 0.3s ease",
       }}
     >
       {/* decorative accents live in their own clipped layer so the rank
           popover (a sibling below) can overflow the card without being cut off */}
-      <div style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 20, pointerEvents: "none" }}>
+      <div style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 14, pointerEvents: "none" }}>
         <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: `linear-gradient(90deg, transparent, ${rc}, transparent)`, opacity: 0.7 }} />
         <div style={{ position: "absolute", top: -50, right: -40, width: 160, height: 160, borderRadius: "50%", background: `radial-gradient(circle, ${mix(rc, 20)}, transparent 72%)` }} />
       </div>
@@ -3775,7 +3775,7 @@ export default function LifeRPG() {
           </>
         )}
 
-        <div className="px-1 pt-1">
+        <div className="pt-1">
           <LevelCard
             name={state.profile?.name || ""}
             onNameChange={(v) => update((d) => { d.profile.name = v; })}
