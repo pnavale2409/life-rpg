@@ -3786,27 +3786,29 @@ export default function LifeRPG() {
           />
         </div>
 
-        <div className="pt-2">
-          <div className="grid grid-cols-2 gap-2 mx-4" style={{ marginBottom: 6 }}>
-            <DashDuoCard
-              icon={Utensils}
-              label="Diet"
-              metric={todayDietPlan ? `${Math.round(todayProtein)}/${Math.round(todayProteinTarget)}g` : "0g"}
-              sub="protein"
-              onClick={() => { if (!readOnly) setTab("diet"); }}
-              variant="solid"
-              locked={readOnly}
-            />
-            <DashDuoCard
-              icon={ListTodo}
-              label="Planner"
-              metric={todayPlannerTasks.length ? `${todayPlannerDone}/${todayPlannerTasks.length}` : "0"}
-              sub="tasks today"
-              onClick={() => { if (!readOnly) setTab("planner"); }}
-              locked={readOnly}
-            />
+        {tab === "dashboard" && (
+          <div className="pt-1">
+            <div className="grid grid-cols-2 gap-2 mx-4" style={{ marginBottom: 6 }}>
+              <DashDuoCard
+                icon={Utensils}
+                label="Diet"
+                metric={todayDietPlan ? `${Math.round(todayProtein)}/${Math.round(todayProteinTarget)}g` : "0g"}
+                sub="protein"
+                onClick={() => { if (!readOnly) setTab("diet"); }}
+                variant="solid"
+                locked={readOnly}
+              />
+              <DashDuoCard
+                icon={ListTodo}
+                label="Planner"
+                metric={todayPlannerTasks.length ? `${todayPlannerDone}/${todayPlannerTasks.length}` : "0"}
+                sub="tasks today"
+                onClick={() => { if (!readOnly) setTab("planner"); }}
+                locked={readOnly}
+              />
+            </div>
           </div>
-        </div>
+        )}
 
         <QuestStrip today={today} />
         <div className="px-4 pb-1 flex items-center justify-between" style={{ flexShrink: 0 }}>
