@@ -3959,7 +3959,7 @@ export default function LifeRPG() {
                 icon={ListTodo}
                 label="Planner"
                 metric={`${todayPlannerRemaining}`}
-                sub="tasks remaining"
+                sub="tasks"
                 onClick={() => { if (!readOnly) setTab("planner"); }}
                 locked={readOnly}
               />
