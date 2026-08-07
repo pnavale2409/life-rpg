@@ -5,7 +5,7 @@ import {
   BookOpen, Dumbbell, Coins, ShieldCheck, ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
   Mountain, Check, Minus, Plus, Save, Trophy, Crown, Lock, RotateCcw, Home, MoreVertical,
   CheckCircle2, CloudOff, Loader2, KeyRound, Copy, Sun, Moon, Sparkles, Calendar, Trash2,
-  Utensils, ListTodo, ArrowRightToLine,
+  Utensils, ListTodo, ArrowRightToLine, Pencil,
 } from "lucide-react";
 
 const FIREBASE_ENABLED = true;
@@ -1730,6 +1730,9 @@ function DietPlanCard({ plan, set }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [protein, setProtein] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState("");
+  const [editProtein, setEditProtein] = useState("");
 
   const totalProtein = plan.items.reduce((sum, i) => sum + (Number(i.protein) || 0), 0);
 
@@ -1753,6 +1756,31 @@ function DietPlanCard({ plan, set }) {
     });
   };
 
+  const startEdit = (item) => {
+    setAdding(false);
+    setEditingId(item.id);
+    setEditName(item.name);
+    setEditProtein(String(item.protein));
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditName("");
+    setEditProtein("");
+  };
+
+  const saveEdit = () => {
+    const trimmed = editName.trim();
+    const p = Number(editProtein);
+    if (!trimmed || !Number.isFinite(p) || p < 0) return;
+    set((d) => {
+      const dp = d.diet.plans.find((x) => x.id === plan.id);
+      const it = dp?.items.find((i) => i.id === editingId);
+      if (it) { it.name = trimmed; it.protein = p; }
+    });
+    cancelEdit();
+  };
+
   const deletePlan = () => {
     set((d) => {
       d.diet.plans = d.diet.plans.filter((p) => p.id !== plan.id);
@@ -1768,21 +1796,72 @@ function DietPlanCard({ plan, set }) {
         {plan.items.length === 0 ? (
           <p style={{ color: C.faint, fontSize: 12.5 }}>No items yet.</p>
         ) : (
-          plan.items.map((item) => (
-            <div
-              key={item.id}
-              style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 10, padding: "8px 12px" }}
-              className="flex items-center gap-2"
-            >
-              <span style={{ flex: 1, color: C.onSurface, fontFamily: sans, fontSize: 13 }}>{item.name}</span>
-              <span style={{ color: C.faint, fontFamily: mono, fontSize: 11.5 }}>{item.protein}g</span>
-              {!readOnly && (
-                <Touchable writeAction onClick={() => removeItem(item.id)} style={{ padding: 4 }}>
-                  <Trash2 size={14} color={C.faint} />
-                </Touchable>
-              )}
-            </div>
-          ))
+          plan.items.map((item) =>
+            editingId === item.id ? (
+              <div
+                key={item.id}
+                style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 10, padding: 10 }}
+                className="flex flex-col gap-2"
+              >
+                <input
+                  type="text"
+                  autoFocus
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder="Item name"
+                  style={{
+                    background: C.container, border: `1px solid ${C.outlineVariant}`, color: C.onSurface,
+                    fontFamily: sans, fontSize: 13, borderRadius: 10, padding: "9px 12px", outline: "none",
+                  }}
+                />
+                <input
+                  type="number"
+                  value={editProtein}
+                  onChange={(e) => setEditProtein(e.target.value)}
+                  placeholder="Protein (g)"
+                  style={{
+                    background: C.container, border: `1px solid ${C.outlineVariant}`, color: C.onSurface,
+                    fontFamily: mono, fontSize: 13, borderRadius: 10, padding: "9px 12px", outline: "none",
+                  }}
+                />
+                <div className="flex items-center gap-2">
+                  <Touchable
+                    onClick={cancelEdit}
+                    style={{ flex: 1, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center" }}
+                  >
+                    <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Cancel</span>
+                  </Touchable>
+                  <Touchable
+                    writeAction
+                    onClick={saveEdit}
+                    style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                  >
+                    <Save size={14} color="#fff" />
+                    <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Save</span>
+                  </Touchable>
+                </div>
+              </div>
+            ) : (
+              <div
+                key={item.id}
+                style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 10, padding: "8px 12px" }}
+                className="flex items-center gap-2"
+              >
+                <span style={{ flex: 1, color: C.onSurface, fontFamily: sans, fontSize: 13 }}>{item.name}</span>
+                <span style={{ color: C.faint, fontFamily: mono, fontSize: 11.5 }}>{item.protein}g</span>
+                {!readOnly && (
+                  <>
+                    <Touchable writeAction onClick={() => startEdit(item)} style={{ padding: 4 }}>
+                      <Pencil size={14} color={C.faint} />
+                    </Touchable>
+                    <Touchable writeAction onClick={() => removeItem(item.id)} style={{ padding: 4 }}>
+                      <Trash2 size={14} color={C.faint} />
+                    </Touchable>
+                  </>
+                )}
+              </div>
+            )
+          )
         )}
       </div>
 
