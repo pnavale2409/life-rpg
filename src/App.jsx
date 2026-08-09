@@ -6,7 +6,7 @@ import {
   Mountain, Check, Minus, Plus, Save, Trophy, Crown, Lock, RotateCcw, Home, MoreVertical,
   CheckCircle2, CloudOff, Loader2, KeyRound, Copy, Sun, Moon, Sparkles, Calendar, Trash2,
   Utensils, ListTodo, ArrowRightToLine, Pencil, Users, UserPlus, History,
-  Briefcase, Plane, Tag, EyeOff,
+  Briefcase, Plane, Tag, EyeOff, Eye,
 } from "lucide-react";
 
 const FIREBASE_ENABLED = true;
@@ -3628,14 +3628,18 @@ export default function LifeRPG() {
   const [codesSaving, setCodesSaving] = useState(false);
 
   // "Readers" panel, owner-only — named view-only passwords + who's opened
-  // the app and when.
+  // the app and when. Edits (name/password changes, deletes, new readers)
+  // are staged in readerDrafts and only committed to Firestore when the
+  // owner taps Save — nothing here writes immediately.
   const [readersPanelOpen, setReadersPanelOpen] = useState(false);
+  const [readerDrafts, setReaderDrafts] = useState([]); // [{id, name, code, removed, isNew}]
   const [readerName, setReaderName] = useState("");
   const [readerCode, setReaderCode] = useState("");
   const [readersError, setReadersError] = useState(null);
   const [readersSaving, setReadersSaving] = useState(false);
   const [readerSessions, setReaderSessions] = useState(null);
   const [readerSessionsLoading, setReaderSessionsLoading] = useState(false);
+  const [revealedReaders, setRevealedReaders] = useState({}); // {[id]: true}
   const loggedReaderSessionRef = useRef(null);
 
   // "Reset all data" write-code confirmation panel.
@@ -3806,11 +3810,20 @@ export default function LifeRPG() {
     }
   }, [newWrite, authConfig]);
 
-  // Readers panel: fetch the recent open-events log (owner-only, on demand).
+  // Readers panel: fetch the recent open-events log (owner-only, on demand)
+  // and seed the local draft list from whatever's currently saved. Legacy
+  // (pre-named-reader) codes never had a plaintext password stored, so
+  // they're excluded from drafts — they keep their own Retire action.
   const openReadersPanel = useCallback(async () => {
     setMenuOpen(false);
     setReadersError(null);
     setReadersPanelOpen(true);
+    setRevealedReaders({});
+    setReaderDrafts(
+      (Array.isArray(authConfig?.readers) ? authConfig.readers : []).map((r) => ({
+        id: r.id, name: r.name, code: r.code || "", hadPlaintext: !!r.code, removed: false, isNew: false,
+      }))
+    );
     setReaderSessionsLoading(true);
     try {
       const snap = await getDoc(doc(db, QUESTS_COLLECTION, READER_LOG_DOC_ID));
@@ -3820,43 +3833,63 @@ export default function LifeRPG() {
     } finally {
       setReaderSessionsLoading(false);
     }
-  }, []);
+  }, [authConfig]);
 
-  const addReader = useCallback(async () => {
+  const readersDirty = readerDrafts.some((r) => r.removed || r.isNew || r.dirty);
+
+  // Stages a new reader in the draft list — nothing is written until Save.
+  const addReaderDraft = useCallback(() => {
     const name = readerName.trim();
     const pass = sanitizeCode(readerCode);
     if (!name) { setReadersError("Enter a name."); return; }
     if (pass.length < 4) { setReadersError("Password must be at least 4 characters."); return; }
-    setReadersSaving(true);
     setReadersError(null);
+    setReaderDrafts((prev) => [...prev, { id: uid(), name, code: pass, hadPlaintext: true, removed: false, isNew: true }]);
+    setReaderName("");
+    setReaderCode("");
+  }, [readerName, readerCode]);
+
+  const updateReaderDraft = useCallback((id, patch) => {
+    setReaderDrafts((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch, dirty: true } : r)));
+  }, []);
+
+  // Toggles the pending-delete flag on a draft row — reversible until Save.
+  const toggleRemoveReaderDraft = useCallback((id) => {
+    setReaderDrafts((prev) => prev.map((r) => (r.id === id ? { ...r, removed: !r.removed } : r)));
+  }, []);
+
+  // Commits every staged change (edits, deletes, new readers) in one write.
+  const saveReaders = useCallback(async () => {
+    setReadersError(null);
+    const kept = readerDrafts.filter((r) => !r.removed);
+    for (const r of kept) {
+      const pass = sanitizeCode(r.code);
+      if (!r.name.trim()) { setReadersError("Every reader needs a name."); return; }
+      if (pass.length < 4) { setReadersError(`${r.name || "A reader"}'s password must be at least 4 characters.`); return; }
+    }
+    setReadersSaving(true);
     try {
-      const hash = await sha256Hex(pass);
-      if (hash === authConfig?.writeCodeHash || normalizeReaders(authConfig).some((r) => r.codeHash === hash)) {
-        setReadersError("That password is already in use — pick a different one.");
+      const hashed = await Promise.all(
+        kept.map(async (r) => ({ id: r.id, name: r.name.trim(), code: sanitizeCode(r.code), codeHash: await sha256Hex(sanitizeCode(r.code)) }))
+      );
+      const hashes = hashed.map((r) => r.codeHash);
+      const dupeAgainstWrite = authConfig?.writeCodeHash && hashes.includes(authConfig.writeCodeHash);
+      const dupeAmongReaders = new Set(hashes).size !== hashes.length;
+      if (dupeAgainstWrite || dupeAmongReaders) {
+        setReadersError("Two readers can't share the same password — pick different ones.");
         setReadersSaving(false);
         return;
       }
-      const nextReaders = [...(Array.isArray(authConfig?.readers) ? authConfig.readers : []), { id: uid(), name, codeHash: hash }];
-      const payload = { ...authConfig, readers: nextReaders };
+      const payload = { ...authConfig, readers: hashed };
       await setDoc(doc(db, QUESTS_COLLECTION, AUTH_DOC_ID), payload);
       setAuthConfig(payload);
-      setReaderName("");
-      setReaderCode("");
+      setReaderDrafts(hashed.map((r) => ({ id: r.id, name: r.name, code: r.code, hadPlaintext: true, removed: false, isNew: false })));
     } catch {
-      setReadersError("Couldn't add that reader. Try again.");
+      setReadersError("Couldn't save changes. Try again.");
     } finally {
       setReadersSaving(false);
     }
-  }, [readerName, readerCode, authConfig]);
-
-  const removeReader = useCallback(async (readerId) => {
-    try {
-      const nextReaders = (Array.isArray(authConfig?.readers) ? authConfig.readers : []).filter((r) => r.id !== readerId);
-      const payload = { ...authConfig, readers: nextReaders };
-      await setDoc(doc(db, QUESTS_COLLECTION, AUTH_DOC_ID), payload);
-      setAuthConfig(payload);
-    } catch {}
-  }, [authConfig]);
+  }, [readerDrafts, authConfig]);
 
   // Turns off the old shared read code, once every friend has their own
   // named password. readCodeHash: null clears it (normalizeReaders treats
@@ -4296,7 +4329,7 @@ export default function LifeRPG() {
                 <input
                   value={readerCode}
                   onChange={(e) => setReaderCode(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") addReader(); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") addReaderDraft(); }}
                   placeholder="Their read-only password"
                   style={{
                     width: "100%", background: C.containerHigh, border: `1px solid ${C.outline}`, color: C.onSurface,
@@ -4307,53 +4340,111 @@ export default function LifeRPG() {
                   <p style={{ color: C.danger, fontSize: 11.5, margin: 0 }}>{readersError}</p>
                 )}
                 <Touchable
-                  onClick={addReader}
-                  disabled={readersSaving}
+                  onClick={addReaderDraft}
                   style={{
-                    padding: "10px 0", borderRadius: 12, background: C.accent, color: "#fff",
+                    padding: "10px 0", borderRadius: 12, border: `1px solid ${C.outline}`, color: C.onSurfaceVariant,
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                    fontWeight: 700, fontSize: 13, opacity: readersSaving ? 0.7 : 1,
+                    fontWeight: 700, fontSize: 13,
                   }}
                 >
-                  {readersSaving ? <Loader2 size={14} className="md-spin" /> : <UserPlus size={14} />}
-                  {readersSaving ? "Adding…" : "Add reader"}
+                  <UserPlus size={14} />
+                  Add reader
                 </Touchable>
               </div>
 
               <div style={{ fontFamily: sans, fontWeight: 700, fontSize: 11, letterSpacing: 0.4, color: C.faint, marginBottom: 8 }}>
-                {normalizeReaders(authConfig).length} READER{normalizeReaders(authConfig).length === 1 ? "" : "S"}
+                {readerDrafts.filter((r) => !r.removed).length} READER{readerDrafts.filter((r) => !r.removed).length === 1 ? "" : "S"}
               </div>
-              <div className="flex flex-col gap-2" style={{ marginBottom: 18 }}>
-                {normalizeReaders(authConfig).length === 0 && (
+              <div className="flex flex-col gap-2" style={{ marginBottom: 10 }}>
+                {readerDrafts.length === 0 && (
                   <p style={{ color: C.faint, fontSize: 12.5 }}>No readers yet — add one above.</p>
                 )}
-                {normalizeReaders(authConfig).map((r) => {
+                {readerDrafts.map((r) => {
                   const last = (readerSessions || []).filter((s) => s.readerId === r.id).slice(-1)[0];
+                  const revealed = !!revealedReaders[r.id];
                   return (
                     <div
                       key={r.id}
-                      style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 10, padding: "8px 12px" }}
-                      className="flex items-center gap-2"
+                      style={{
+                        background: C.containerHigh, border: `1px solid ${r.removed ? C.danger : C.outlineVariant}`,
+                        borderRadius: 10, padding: "8px 10px", opacity: r.removed ? 0.5 : 1,
+                      }}
                     >
-                      <div className="flex flex-col" style={{ flex: 1, minWidth: 0 }}>
-                        <span style={{ color: C.onSurface, fontFamily: sans, fontSize: 13, fontWeight: 600 }}>{r.name}</span>
-                        <span style={{ color: C.faint, fontFamily: mono, fontSize: 10.5 }}>
-                          {last ? `Active ${timeAgo(last.at)}` : "No activity yet"}
-                        </span>
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={r.name}
+                          onChange={(e) => updateReaderDraft(r.id, { name: e.target.value })}
+                          disabled={r.removed}
+                          placeholder="Name"
+                          style={{
+                            flex: 1, minWidth: 0, background: "transparent", border: "none", outline: "none",
+                            color: C.onSurface, fontFamily: sans, fontSize: 13, fontWeight: 600, padding: "2px 0",
+                          }}
+                        />
+                        <Touchable onClick={() => toggleRemoveReaderDraft(r.id)} style={{ padding: 4 }}>
+                          {r.removed ? (
+                            <RotateCcw size={14} color={C.onSurfaceVariant} />
+                          ) : (
+                            <Trash2 size={14} color={C.faint} />
+                          )}
+                        </Touchable>
                       </div>
-                      {r.legacy ? (
-                        <Touchable onClick={retireLegacyCode} style={{ padding: "4px 8px" }}>
-                          <span style={{ color: C.danger, fontFamily: sans, fontSize: 11.5, fontWeight: 600 }}>Retire</span>
+                      <div className="flex items-center gap-2" style={{ marginTop: 4 }}>
+                        <input
+                          value={r.hadPlaintext || r.dirty || r.isNew ? r.code : ""}
+                          onChange={(e) => updateReaderDraft(r.id, { code: e.target.value })}
+                          disabled={r.removed}
+                          type={revealed ? "text" : "password"}
+                          placeholder={r.hadPlaintext ? "" : "Set a password to reveal it here"}
+                          style={{
+                            flex: 1, minWidth: 0, background: C.container, border: `1px solid ${C.outlineVariant}`,
+                            outline: "none", color: C.onSurface, fontFamily: mono, fontSize: 12.5,
+                            borderRadius: 8, padding: "5px 8px",
+                          }}
+                        />
+                        <Touchable
+                          onClick={() => setRevealedReaders((prev) => ({ ...prev, [r.id]: !prev[r.id] }))}
+                          style={{ padding: 4 }}
+                        >
+                          {revealed ? <EyeOff size={14} color={C.faint} /> : <Eye size={14} color={C.faint} />}
                         </Touchable>
-                      ) : (
-                        <Touchable onClick={() => removeReader(r.id)} style={{ padding: 4 }}>
-                          <Trash2 size={14} color={C.faint} />
-                        </Touchable>
-                      )}
+                      </div>
+                      <span style={{ color: C.faint, fontFamily: mono, fontSize: 10, display: "block", marginTop: 3 }}>
+                        {r.removed ? "Marked for removal — tap to undo" : last ? `Active ${timeAgo(last.at)}` : "No activity yet"}
+                      </span>
                     </div>
                   );
                 })}
+                {authConfig?.readCodeHash && (
+                  <div
+                    style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 10, padding: "8px 12px" }}
+                    className="flex items-center gap-2"
+                  >
+                    <div className="flex flex-col" style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ color: C.onSurface, fontFamily: sans, fontSize: 13, fontWeight: 600 }}>Shared (old code)</span>
+                      <span style={{ color: C.faint, fontFamily: mono, fontSize: 10.5 }}>No password on file — legacy code</span>
+                    </div>
+                    <Touchable onClick={retireLegacyCode} style={{ padding: "4px 8px" }}>
+                      <span style={{ color: C.danger, fontFamily: sans, fontSize: 11.5, fontWeight: 600 }}>Retire</span>
+                    </Touchable>
+                  </div>
+                )}
               </div>
+
+              {readersDirty && (
+                <Touchable
+                  onClick={saveReaders}
+                  disabled={readersSaving}
+                  style={{
+                    width: "100%", padding: "10px 0", borderRadius: 12, background: C.accent, color: "#fff",
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                    fontWeight: 700, fontSize: 13, opacity: readersSaving ? 0.7 : 1, marginBottom: 10,
+                  }}
+                >
+                  {readersSaving ? <Loader2 size={14} className="md-spin" /> : <Save size={14} />}
+                  {readersSaving ? "Saving…" : "Save changes"}
+                </Touchable>
+              )}
 
               <div className="flex items-center gap-2" style={{ marginBottom: 8 }}>
                 <History size={13} color={C.faint} />
