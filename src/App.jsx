@@ -6,6 +6,7 @@ import {
   Mountain, Check, Minus, Plus, Save, Trophy, Crown, Lock, RotateCcw, Home, MoreVertical,
   CheckCircle2, CloudOff, Loader2, KeyRound, Copy, Sun, Moon, Sparkles, Calendar, Trash2,
   Utensils, ListTodo, ArrowRightToLine, Pencil, Users, UserPlus, History,
+  Briefcase, Plane, Tag, EyeOff,
 } from "lucide-react";
 
 const FIREBASE_ENABLED = true;
@@ -269,10 +270,21 @@ function uid() {
    keys still iterate in ascending order, so existing indexing code
    (armWeeks[wi][si]) keeps working unchanged.
 --------------------------------------------------------------- */
+const STATUS_OPTIONS = [
+  { value: "home", label: "Home", icon: Home },
+  { value: "office", label: "Office", icon: Briefcase },
+  { value: "trekking", label: "Trekking", icon: Mountain },
+  { value: "muaythai", label: "Muay Thai", icon: Dumbbell },
+  { value: "traveling", label: "Traveling", icon: Plane },
+  { value: "off", label: "Off", icon: Moon },
+];
+
 function defaultState() {
   return {
     profile: {
       name: "",
+      status: "",
+      statusEnabled: true,
     },
     wisdom: {
       laws: Array(48).fill(false),
@@ -322,7 +334,9 @@ function defaultState() {
 function migrateState(parsed) {
   const base = defaultState();
   const next = { ...base, ...parsed };
-  if (!next.profile) next.profile = { name: "" };
+  if (!next.profile) next.profile = { name: "", status: "", statusEnabled: true };
+  if (next.profile.status === undefined) next.profile.status = "";
+  if (next.profile.statusEnabled === undefined) next.profile.statusEnabled = true;
   if (typeof next.vitality?.muayThai === "number") {
     const n = next.vitality.muayThai;
     const map = {};
@@ -3248,7 +3262,138 @@ function RankBadge({ rank, color, xp, bandFrom, bandTo, mode }) {
   );
 }
 
-function LevelCard({ name, onNameChange, overall, totalXP, today, mode }) {
+/* Small neutral pill beside the name showing what the user is up to
+   (home / office / trekking / muay thai / custom text). Tapping it opens
+   a compact popover: preset options, a free-text field for anything else,
+   and a toggle to hide the chip entirely. */
+function StatusChip({ status, enabled, onChange, onToggleEnabled }) {
+  const readOnly = useContext(ReadOnlyContext);
+  const [open, setOpen] = useState(false);
+  const [customDraft, setCustomDraft] = useState("");
+  const wrapRef = useRef(null);
+  const preset = STATUS_OPTIONS.find((o) => o.value === status);
+  const Icon = preset ? preset.icon : status ? Tag : Tag;
+  const label = preset ? preset.label : status || "Set status";
+
+  useEffect(() => {
+    if (open) setCustomDraft(preset ? "" : status || "");
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+
+  if (!enabled && readOnly) return null;
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative" }}>
+      <Touchable
+        onClick={() => !readOnly && setOpen((v) => !v)}
+        writeAction
+        style={{
+          display: enabled || !readOnly ? "inline-flex" : "none",
+          alignItems: "center", gap: 5,
+          background: C.containerHigh, border: `1px solid ${C.outline}`,
+          borderRadius: 999, padding: "3px 9px",
+          opacity: enabled ? 1 : 0.45,
+        }}
+      >
+        {enabled ? (
+          <Icon size={11} color={C.onSurfaceVariant} />
+        ) : (
+          <EyeOff size={11} color={C.onSurfaceVariant} />
+        )}
+        <span style={{ fontFamily: sans, fontWeight: 500, fontSize: 10.5, color: C.onSurfaceVariant }}>
+          {enabled ? label : "Hidden"}
+        </span>
+      </Touchable>
+
+      {open && !readOnly && (
+        <div
+          style={{
+            position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 30,
+            width: 190, background: C.containerHighest, border: `1px solid ${C.outline}`,
+            borderRadius: 12, padding: 8, boxShadow: "0 8px 20px rgba(0,0,0,0.35)",
+          }}
+        >
+          <div className="flex flex-col gap-0.5" style={{ marginBottom: 6 }}>
+            {STATUS_OPTIONS.map((o) => {
+              const OIcon = o.icon;
+              const active = status === o.value;
+              return (
+                <Touchable
+                  key={o.value}
+                  onClick={() => { onChange(o.value); setOpen(false); }}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    padding: "6px 8px", borderRadius: 8,
+                    background: active ? mix(C.accent, 16) : "transparent",
+                  }}
+                >
+                  <OIcon size={13} color={active ? C.accent : C.onSurfaceVariant} />
+                  <span style={{ fontFamily: sans, fontSize: 12, color: active ? C.accent : C.onSurface }}>
+                    {o.label}
+                  </span>
+                </Touchable>
+              );
+            })}
+          </div>
+
+          <div style={{ borderTop: `1px solid ${C.outlineVariant}`, paddingTop: 8, marginBottom: 8 }}>
+            <span style={{ fontFamily: sans, fontSize: 9.5, fontWeight: 700, letterSpacing: 0.3, color: C.faint }}>
+              CUSTOM
+            </span>
+            <input
+              value={customDraft}
+              onChange={(e) => setCustomDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && customDraft.trim()) {
+                  onChange(customDraft.trim());
+                  setOpen(false);
+                }
+              }}
+              placeholder="Type your own…"
+              style={{
+                width: "100%", marginTop: 4, fontFamily: sans, fontSize: 12, color: C.onSurface,
+                background: C.container, border: `1px solid ${C.outline}`, borderRadius: 8,
+                padding: "6px 8px", outline: "none",
+              }}
+            />
+            <Touchable
+              onClick={() => { if (customDraft.trim()) { onChange(customDraft.trim()); setOpen(false); } }}
+              style={{
+                marginTop: 6, width: "100%", textAlign: "center", padding: "6px 0",
+                borderRadius: 8, border: `1px solid ${C.outline}`,
+              }}
+            >
+              <span style={{ fontFamily: sans, fontSize: 11.5, color: C.onSurfaceVariant }}>Use custom text</span>
+            </Touchable>
+          </div>
+
+          <Touchable
+            onClick={() => onToggleEnabled(!enabled)}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "6px 8px", borderRadius: 8, border: `1px solid ${C.outlineVariant}`,
+            }}
+          >
+            <span style={{ fontFamily: sans, fontSize: 11.5, color: C.onSurfaceVariant }}>
+              {enabled ? "Hide status chip" : "Show status chip"}
+            </span>
+            <EyeOff size={13} color={C.faint} />
+          </Touchable>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LevelCard({ name, onNameChange, overall, totalXP, today, mode, status, statusEnabled, onStatusChange, onToggleStatusEnabled }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name);
   const { rank, progress, bandFrom, bandTo, xp } = rankInfo(totalXP);
@@ -3285,30 +3430,38 @@ function LevelCard({ name, onNameChange, overall, totalXP, today, mode }) {
       </div>
       <div className="flex items-end gap-3" style={{ position: "relative", padding: 16 }}>
         <div className="flex-1 min-w-0">
-          {editing ? (
-            <input
-              autoFocus
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onBlur={commit}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") commit();
-                if (e.key === "Escape") { setDraft(name); setEditing(false); }
-              }}
-              placeholder="Your Name"
-              style={{
-                fontFamily: sans, fontWeight: 900, fontSize: 16, color: C.onSurface,
-                background: "transparent", border: "none", borderBottom: `1px solid ${C.outline}`,
-                outline: "none", width: "100%", padding: "1px 0",
-              }}
+          <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+            {editing ? (
+              <input
+                autoFocus
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onBlur={commit}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commit();
+                  if (e.key === "Escape") { setDraft(name); setEditing(false); }
+                }}
+                placeholder="Your Name"
+                style={{
+                  fontFamily: sans, fontWeight: 900, fontSize: 16, color: C.onSurface,
+                  background: "transparent", border: "none", borderBottom: `1px solid ${C.outline}`,
+                  outline: "none", width: "100%", padding: "1px 0",
+                }}
+              />
+            ) : (
+              <Touchable onClick={() => setEditing(true)} writeAction style={{ display: "inline-block", borderRadius: 8 }}>
+                <span style={{ fontFamily: sans, fontWeight: 900, fontSize: 16, color: name ? C.onSurface : C.faint, letterSpacing: 0.3 }}>
+                  {(name || "Your Name").toUpperCase()}
+                </span>
+              </Touchable>
+            )}
+            <StatusChip
+              status={status}
+              enabled={statusEnabled}
+              onChange={onStatusChange}
+              onToggleEnabled={onToggleStatusEnabled}
             />
-          ) : (
-            <Touchable onClick={() => setEditing(true)} writeAction style={{ display: "inline-block", borderRadius: 8 }}>
-              <span style={{ fontFamily: sans, fontWeight: 900, fontSize: 16, color: name ? C.onSurface : C.faint, letterSpacing: 0.3 }}>
-                {(name || "Your Name").toUpperCase()}
-              </span>
-            </Touchable>
-          )}
+          </div>
 
           <div className="flex items-end gap-3" style={{ marginTop: 8 }}>
             <RankBadge
@@ -4244,6 +4397,10 @@ export default function LifeRPG() {
             totalXP={wScore + vScore + weScore + rScore}
             today={today}
             mode={mode}
+            status={state.profile?.status || ""}
+            statusEnabled={state.profile?.statusEnabled !== false}
+            onStatusChange={(v) => update((d) => { d.profile.status = v; })}
+            onToggleStatusEnabled={(v) => update((d) => { d.profile.statusEnabled = v; })}
           />
         </div>
 
