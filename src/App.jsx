@@ -2628,7 +2628,6 @@ function CalendarDayDetail({ date, state, set }) {
         rightLabel={`${Math.round(dietConsumedProtein)} / ${Math.round(dietTotalProtein)}g`}
         color={C.accent}
         defaultOpen
-        locked={readOnly}
       >
         {plans.length === 0 ? (
           <p style={{ color: C.faint, fontSize: 12.5 }}>No diets created yet — add one from the Diet tab.</p>
@@ -4034,9 +4033,8 @@ export default function LifeRPG() {
                   )
                 }
                 sub="protein"
-                onClick={() => { if (!readOnly) setTab("diet"); }}
+                onClick={() => setTab("diet")}
                 variant="solid"
-                locked={readOnly}
               />
               <DashDuoCard
                 icon={ListTodo}
@@ -4110,7 +4108,7 @@ export default function LifeRPG() {
           {tab === "wealth" && <WealthTab s={state.wealth} set={update} locked={questLocked} />}
           {tab === "resolve" && <ResolveTab s={state.resolve} effective={effResolve} set={update} locked={questLocked} wealth={state.wealth} />}
           {tab === "achievements" && <AchievementsTab state={achieveState} overall={overall} />}
-          {tab === "diet" && (readOnly ? <RestrictedTab label="Diet" /> : <DietTab s={state.diet} set={update} />)}
+          {tab === "diet" && <DietTab s={state.diet} set={update} />}
           {tab === "planner" && (readOnly ? <RestrictedTab label="Planner" /> : <PlannerTab s={state.planner} set={update} />)}
           {tab === "calendar" && <CalendarTab state={state} set={update} />}
 
