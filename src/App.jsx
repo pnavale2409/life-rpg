@@ -7,9 +7,10 @@ import {
   CheckCircle2, CloudOff, Loader2, KeyRound, Copy, Sun, Moon, Sparkles, Calendar, Trash2,
   Utensils, ListTodo, ArrowRightToLine, Pencil, Users, UserPlus, History,
   Briefcase, Plane, Tag, EyeOff, Eye,
+  Rocket, TrendingUp, Building2, Shuffle, Gem, Globe,
 } from "lucide-react";
 
-const FIREBASE_ENABLED = true;
+const SYNC_ENABLED = true;
 
 const LOCAL_STATE_KEY = "life-rpg-local-state";
 
@@ -147,6 +148,14 @@ function dateOnly(d) {
 function mix(colorVar, pct) {
   return `color-mix(in srgb, ${colorVar} ${pct}%, transparent)`;
 }
+/* Blends two theme colors together (rather than fading toward
+   transparent, like mix() does) — used to give a category its own
+   distinct hue when the 5-color theme palette runs short, e.g. US
+   Stocks = accent+wisdom so it doesn't look identical to Flexi Cap's
+   plain accent. */
+function blend(colorA, colorB, pctA = 50) {
+  return `color-mix(in srgb, ${colorA} ${pctA}%, ${colorB})`;
+}
 function weekdayCount(start, end) {
   let n = 0;
   let d = new Date(start);
@@ -244,7 +253,7 @@ function normalizeReaders(authConfig) {
    only, via the Readers panel). Best-effort — a failed write here should
    never block the reader from getting into the app. */
 async function logReaderSession(readerId, name) {
-  if (!FIREBASE_ENABLED) return;
+  if (!SYNC_ENABLED) return;
   try {
     const ref = doc(db, QUESTS_COLLECTION, READER_LOG_DOC_ID);
     const snap = await getDoc(ref);
@@ -303,7 +312,7 @@ function defaultState() {
       treks: 0,
     },
     wealth: {
-      invest: [false, false, false],
+      invest: [emptyInvestMonth(), emptyInvestMonth(), emptyInvestMonth()],
       save: [0, 0, 0],
       saveAllowance: [0, 0, 0], // in units of ₹1,000, drawn from a shared ₹5,000 pool across the 3 months
     },
@@ -396,6 +405,52 @@ function vitalityScore(s) {
   const treks = s.treks * 1;
   return clamp(mt + armPts + abPts + treks, 0, 100);
 }
+/* Investment allocation — 20 pts/month split across categories by the
+   real portfolio weighting (25/25/15/15/10/10), so points = pct/5.
+   Each category also gets a color + icon so the mission card reads as
+   a real portfolio breakdown instead of a flat checklist. */
+const INVEST_CATEGORIES = [
+  { key: "smallCap", label: "Small Cap MF", pct: 25, pts: 5, color: C.vitality, icon: Rocket },
+  { key: "midCap", label: "Mid Cap MF", pct: 25, pts: 5, color: C.wisdom, icon: TrendingUp },
+  { key: "largeCap", label: "Large Cap MF", pct: 15, pts: 3, color: C.resolve, icon: Building2 },
+  { key: "flexiCap", label: "Flexi Cap MF", pct: 15, pts: 3, color: C.accent, icon: Shuffle },
+  { key: "gold", label: "Gold", pct: 10, pts: 2, color: C.wealth, icon: Gem },
+  { key: "usStocks", label: "US Stocks", pct: 10, pts: 2, color: blend(C.accent, C.wisdom, 55), icon: Globe },
+];
+function emptyInvestMonth() {
+  return Object.fromEntries(INVEST_CATEGORIES.map((c) => [c.key, null]));
+}
+/* Each category entry is either null (unchecked) or an ISO date string
+   recording when it was marked — so the UI can show "Marked Aug 5".
+   s.wealth.invest used to be a plain boolean per month, and each month
+   object used to hold booleans per category (no date); these helpers
+   accept all three shapes so old saved state keeps working until the
+   person re-checks that month's categories. */
+function investMonthPoints(month) {
+  if (typeof month === "boolean") return month ? 20 : 0;
+  if (!month) return 0;
+  return INVEST_CATEGORIES.reduce((sum, c) => sum + (month[c.key] ? c.pts : 0), 0);
+}
+function investMonthAny(month) {
+  if (typeof month === "boolean") return month;
+  if (!month) return false;
+  return INVEST_CATEGORIES.some((c) => month[c.key]);
+}
+function investMonthComplete(month) {
+  if (typeof month === "boolean") return month;
+  if (!month) return false;
+  return INVEST_CATEGORIES.every((c) => month[c.key]);
+}
+/* Renders a category's stored value as a short date label ("Aug 5"),
+   whether it's an ISO string (new format) or a plain `true` (old
+   format, no date on record). */
+function investMarkedLabel(value) {
+  if (!value) return null;
+  if (value === true) return "Marked";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "Marked";
+  return `Marked ${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+}
 function savePoints(amt) {
   if (amt >= 15000) return 12;
   return Math.max(0, 12 - Math.floor((15000 - amt) / 1000));
@@ -405,7 +460,7 @@ function effSave(s, i) {
   return s.save[i] + (s.saveAllowance?.[i] || 0) * 1000;
 }
 function wealthScore(s) {
-  const inv = s.invest.filter(Boolean).length * 20;
+  const inv = s.invest.reduce((sum, m) => sum + investMonthPoints(m), 0);
   const sav = s.save.reduce((sum, _a, i) => sum + savePoints(effSave(s, i)), 0);
   const bonus = s.save.every((_a, i) => effSave(s, i) >= 15000) ? 4 : 0;
   return clamp(inv + sav + bonus, 0, 100);
@@ -550,8 +605,8 @@ const ACHIEVEMENTS = [
   { id: "v6", attr: "vitality", label: "Trailblazer", desc: "Complete your first trek.", check: (s) => s.vitality.treks >= 1 },
   { id: "v7", attr: "vitality", label: "Summit Seeker", desc: "Complete all 9 treks.", check: (s) => s.vitality.treks >= 9 },
   { id: "v8", attr: "vitality", label: "Vitality Master", desc: "Reach 100/100 Vitality.", check: (s) => vitalityScore(s.vitality) >= 100 },
-  { id: "we1", attr: "wealth", label: "First Investment", desc: "Invest ₹50,000 in a month.", check: (s) => s.wealth.invest.some(Boolean) },
-  { id: "we2", attr: "wealth", label: "Investor", desc: "Hit the invest target 3 months running.", check: (s) => s.wealth.invest.every(Boolean) },
+  { id: "we1", attr: "wealth", label: "First Investment", desc: "Log your first month's investment allocation.", check: (s) => s.wealth.invest.some(investMonthAny) },
+  { id: "we2", attr: "wealth", label: "Investor", desc: "Hit the full allocation 3 months running.", check: (s) => s.wealth.invest.every(investMonthComplete) },
   { id: "we3", attr: "wealth", label: "Saver", desc: "Hit the ₹15,000 save target in a month.", check: (s) => s.wealth.save.some((a, i) => effSave(s.wealth, i) >= 15000) },
   { id: "we4", attr: "wealth", label: "Consistency Bonus", desc: "Hit the save target all 3 months.", check: (s) => s.wealth.save.every((a, i) => effSave(s.wealth, i) >= 15000) },
   { id: "we5", attr: "wealth", label: "Wealth Master", desc: "Reach 100/100 Wealth.", check: (s) => wealthScore(s.wealth) >= 100 },
@@ -875,7 +930,7 @@ function Mission({ title, points, earned, children, color, defaultOpen = false, 
       />
       <Touchable onClick={() => { if (!locked) setOpen((o) => !o); }} disabled={locked} style={{ display: "block" }}>
         <div className="w-full flex items-center justify-between p-4">
-          <span style={{ fontFamily: sans, fontWeight: 500, color: C.onSurface, fontSize: 14.5 }}>{title}</span>
+          <div style={{ fontFamily: sans, fontWeight: 500, color: C.onSurface, fontSize: 14.5, minWidth: 0, flex: 1 }}>{title}</div>
           <div className="flex items-center gap-2 flex-shrink-0">
             <span style={{ fontFamily: mono, color, fontSize: 11.5 }}>
               {rightLabel !== undefined
@@ -1110,23 +1165,153 @@ function VitalityTab({ s, effective, set, locked }) {
 }
 
 /* ---------------------------------------------------------------
+   INVEST MONTH CARD — a per-month accordion for the investment
+   allocation. Each category row is its own touch target with a
+   colored icon badge, a stacked allocation bar in the header shows
+   the real portfolio shape at a glance, and a marked category shows
+   the date it was checked. */
+function InvestMonthCard({ label, monthState, defaultOpen, onToggleCategory }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const pts = investMonthPoints(monthState);
+  const complete = pts >= 20;
+  return (
+    <div
+      style={{
+        background: `linear-gradient(160deg, var(--container-high), var(--container))`,
+        border: `1px solid ${complete ? mix(C.wealth, 45) : C.outlineVariant}`,
+        borderRadius: 16,
+        overflow: "hidden",
+        boxShadow: complete ? `0 0 16px ${mix(C.wealth, 20)}` : "none",
+        transition: "border-color 0.2s ease, box-shadow 0.2s ease",
+      }}
+    >
+      <Touchable onClick={() => setOpen((o) => !o)} style={{ display: "block" }}>
+        <div className="flex items-center gap-3 px-4 py-3.5">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between" style={{ marginBottom: 7 }}>
+              <span style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 14 }}>{label}</span>
+              <span style={{ fontFamily: mono, fontSize: 12, color: complete ? C.wealth : C.onSurfaceVariant, fontWeight: 700 }}>
+                {pts} <span style={{ color: C.faint, fontWeight: 500 }}>/ 20 pts</span>
+              </span>
+            </div>
+            {/* Stacked allocation bar — segment widths mirror the real
+                25/25/15/15/10/10 portfolio split; a segment lights up in
+                its category color once that slice is marked. */}
+            <div className="flex" style={{ height: 8, borderRadius: 4, overflow: "hidden", background: C.outlineVariant, gap: 1.5 }}>
+              {INVEST_CATEGORIES.map((c) => {
+                const checked = typeof monthState === "object" && !!monthState?.[c.key];
+                return (
+                  <div
+                    key={c.key}
+                    style={{
+                      width: `${c.pct}%`,
+                      background: checked ? c.color : "transparent",
+                      boxShadow: checked ? `0 0 5px ${mix(c.color, 60)}` : "none",
+                      transition: "background 0.2s ease",
+                    }}
+                  />
+                );
+              })}
+            </div>
+          </div>
+          {open ? <ChevronUp size={16} color={C.onSurfaceVariant} /> : <ChevronDown size={16} color={C.onSurfaceVariant} />}
+        </div>
+      </Touchable>
+      {open && (
+        <div className="px-3 pb-3 flex flex-col gap-1.5">
+          {INVEST_CATEGORIES.map((c) => {
+            const checked = typeof monthState === "object" && !!monthState?.[c.key];
+            const markedLabel = checked ? investMarkedLabel(monthState[c.key]) : null;
+            const Icon = c.icon;
+            return (
+              <Touchable
+                key={c.key}
+                writeAction
+                onClick={() => onToggleCategory(c.key)}
+                rippleColor={mix(c.color, 20)}
+                style={{
+                  display: "block", borderRadius: 12,
+                  background: checked ? mix(c.color, 12) : C.container,
+                  border: `1px solid ${checked ? mix(c.color, 35) : C.outlineVariant}`,
+                  transition: "background 0.15s ease, border-color 0.15s ease",
+                }}
+              >
+                <div className="flex items-center gap-3 px-3 py-2.5">
+                  <div
+                    style={{
+                      width: 34, height: 34, borderRadius: 10, flexShrink: 0,
+                      background: checked ? c.color : mix(c.color, 14),
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      boxShadow: checked ? `0 0 8px ${mix(c.color, 50)}` : "none",
+                      transition: "background 0.15s ease",
+                    }}
+                  >
+                    <Icon size={16} color={checked ? C.surface : c.color} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <span style={{ fontFamily: sans, fontWeight: 600, fontSize: 13, color: C.onSurface }}>{c.label}</span>
+                      <span style={{ fontFamily: mono, fontSize: 10.5, color: c.color, fontWeight: 700, flexShrink: 0, marginLeft: 8 }}>
+                        {c.pct}% · {c.pts}pt
+                      </span>
+                    </div>
+                    <span style={{ fontFamily: mono, fontSize: 10, color: C.faint, display: "block", marginTop: 1 }}>
+                      {markedLabel || "Not marked yet"}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      width: 20, height: 20, borderRadius: 6, flexShrink: 0,
+                      border: `2px solid ${checked ? c.color : C.faint}`,
+                      background: checked ? c.color : "transparent",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      transition: "all 0.12s ease",
+                    }}
+                  >
+                    {checked && <Check size={12} color={C.surface} strokeWidth={3} />}
+                  </div>
+                </div>
+              </Touchable>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
    WEALTH TAB
 --------------------------------------------------------------- */
 function WealthTab({ s, set, locked }) {
   const readOnly = useContext(ReadOnlyContext);
   const score = wealthScore(s);
   const months = ["August", "September", "October"];
+  // Default-open whichever month is current (Aug/Sep/Oct 2026); falls
+  // back to August outside that window.
+  const now = new Date();
+  const defaultMonthIdx = now.getFullYear() === 2026 && now.getMonth() >= 7 && now.getMonth() <= 9
+    ? now.getMonth() - 7
+    : 0;
   return (
     <div className="pb-4">
       <ScreenHeader title="Wealth" sub="Financial discipline through investing and saving." color={C.wealth} score={score} />
       <LockWrap locked={locked} color={C.wealth}>
-        <Mission title="Invest — ₹50,000 / month" points={60} earned={s.invest.filter(Boolean).length * 20} color={C.wealth}>
-          <div className="flex flex-col">
+        <Mission title="Invest — Monthly Allocation" points={60} earned={s.invest.reduce((sum, m) => sum + investMonthPoints(m), 0)} color={C.wealth}>
+          <div className="flex flex-col gap-3">
             {months.map((m, i) => (
-              <label key={m} className="flex items-center gap-1">
-                <Check2 checked={s.invest[i]} color={C.wealth} onClick={() => set((d) => { d.wealth.invest[i] = !d.wealth.invest[i]; })} />
-                <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>{m} (20 pts)</span>
-              </label>
+              <InvestMonthCard
+                key={m}
+                label={m}
+                monthState={s.invest[i]}
+                defaultOpen={i === defaultMonthIdx}
+                onToggleCategory={(key) => set((d) => {
+                  const cur = d.wealth.invest[i];
+                  const obj = cur && typeof cur === "object" ? { ...cur } : emptyInvestMonth();
+                  obj[key] = obj[key] ? null : new Date().toISOString();
+                  d.wealth.invest[i] = obj;
+                })}
+              />
             ))}
           </div>
         </Mission>
@@ -1786,8 +1971,30 @@ function DietPlanCard({ plan, set }) {
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState("");
   const [editProtein, setEditProtein] = useState("");
+  const [editingPlanName, setEditingPlanName] = useState(false);
+  const [planNameDraft, setPlanNameDraft] = useState(plan.name);
 
   const totalProtein = plan.items.reduce((sum, i) => sum + (Number(i.protein) || 0), 0);
+
+  const startEditPlanName = () => {
+    setPlanNameDraft(plan.name);
+    setEditingPlanName(true);
+  };
+
+  const cancelEditPlanName = () => {
+    setEditingPlanName(false);
+    setPlanNameDraft(plan.name);
+  };
+
+  const saveEditPlanName = () => {
+    const trimmed = planNameDraft.trim();
+    if (!trimmed) { cancelEditPlanName(); return; }
+    set((d) => {
+      const dp = d.diet.plans.find((x) => x.id === plan.id);
+      if (dp) dp.name = trimmed;
+    });
+    setEditingPlanName(false);
+  };
 
   const addItem = () => {
     const trimmed = name.trim();
@@ -1843,8 +2050,51 @@ function DietPlanCard({ plan, set }) {
     });
   };
 
+  const planNameTitle = editingPlanName ? (
+    <div
+      className="flex items-center gap-1.5"
+      style={{ minWidth: 0 }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <input
+        type="text"
+        autoFocus
+        value={planNameDraft}
+        onChange={(e) => setPlanNameDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") saveEditPlanName();
+          if (e.key === "Escape") cancelEditPlanName();
+        }}
+        style={{
+          background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, color: C.onSurface,
+          fontFamily: sans, fontWeight: 500, fontSize: 13.5, borderRadius: 8, padding: "5px 8px",
+          outline: "none", width: "100%", minWidth: 0,
+        }}
+      />
+      <Touchable onClick={(e) => { e.stopPropagation(); saveEditPlanName(); }} style={{ padding: 4, flexShrink: 0 }}>
+        <Check size={15} color={C.accent} />
+      </Touchable>
+      <Touchable onClick={(e) => { e.stopPropagation(); cancelEditPlanName(); }} style={{ padding: 4, flexShrink: 0 }}>
+        <span style={{ color: C.faint, fontSize: 15, fontFamily: sans, lineHeight: 1 }}>×</span>
+      </Touchable>
+    </div>
+  ) : (
+    <div className="flex items-center gap-1.5" style={{ minWidth: 0 }}>
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{plan.name}</span>
+      {!readOnly && (
+        <Touchable
+          writeAction
+          onClick={(e) => { e.stopPropagation(); startEditPlanName(); }}
+          style={{ padding: 3, flexShrink: 0 }}
+        >
+          <Pencil size={12} color={C.faint} />
+        </Touchable>
+      )}
+    </div>
+  );
+
   return (
-    <Mission title={plan.name} points={Math.round(totalProtein)} color={C.accent}>
+    <Mission title={planNameTitle} points={Math.round(totalProtein)} color={C.accent}>
       <div className="flex flex-col gap-2" style={{ marginBottom: 10 }}>
         {plan.items.length === 0 ? (
           <p style={{ color: C.faint, fontSize: 12.5 }}>No items yet.</p>
@@ -2057,11 +2307,143 @@ function CreateDietCard({ set, onCreate }) {
    backlog of tasks not yet assigned to any day. Entirely separate
    from the Level 1 quest / scoring, same as Diet.
 --------------------------------------------------------------- */
+/* ---------------------------------------------------------------
+   PLANNER DATE PICKER — tapping the date opens a themed month-grid
+   dropdown so you can jump to any date directly, instead of only
+   stepping one day at a time via the arrows. Days with tasks get a
+   small dot so you can spot them at a glance; a "Jump to Today"
+   shortcut sits at the bottom for snapping back after jumping far. */
+function PlannerDatePicker({ selected, onSelect, hasTasks }) {
+  const [open, setOpen] = useState(false);
+  const selDate = new Date(selected + "T00:00:00");
+  const [viewYear, setViewYear] = useState(selDate.getFullYear());
+  const [viewMonth, setViewMonth] = useState(selDate.getMonth());
+  const wrapRef = useRef(null);
+  const isToday = selected === fmtDate(new Date());
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const openPicker = () => {
+    setViewYear(selDate.getFullYear());
+    setViewMonth(selDate.getMonth());
+    setOpen((o) => !o);
+  };
+
+  const shiftMonth = (delta) => {
+    let m = viewMonth + delta;
+    let y = viewYear;
+    if (m < 0) { m = 11; y -= 1; }
+    if (m > 11) { m = 0; y += 1; }
+    setViewMonth(m);
+    setViewYear(y);
+  };
+
+  const firstOfMonth = new Date(viewYear, viewMonth, 1);
+  const startWeekday = firstOfMonth.getDay();
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(null);
+  for (let day = 1; day <= daysInMonth; day++) cells.push(new Date(viewYear, viewMonth, day));
+  const monthLabel = firstOfMonth.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const todayStr = fmtDate(new Date());
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative" }}>
+      <Touchable
+        onClick={openPicker}
+        style={{
+          borderRadius: 12, padding: "4px 12px",
+          display: "flex", flexDirection: "column", alignItems: "center",
+          background: open ? mix(C.accent, 12) : "transparent",
+        }}
+      >
+        <div className="flex items-center gap-1.5">
+          <Calendar size={12} color={C.accent} />
+          <span style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 15 }}>
+            {selDate.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+          </span>
+          {open ? <ChevronUp size={13} color={C.onSurfaceVariant} /> : <ChevronDown size={13} color={C.onSurfaceVariant} />}
+        </div>
+        {isToday && (
+          <span style={{ fontFamily: mono, fontSize: 10, fontWeight: 700, color: C.accent, letterSpacing: 0.5 }}>TODAY</span>
+        )}
+      </Touchable>
+
+      {open && (
+        <div
+          style={{
+            position: "absolute", top: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)",
+            zIndex: 40, width: 280,
+            background: C.containerHighest, border: `1px solid ${C.outlineVariant}`,
+            borderRadius: 16, padding: 14, boxShadow: "0 12px 28px rgba(0,0,0,0.4)",
+          }}
+        >
+          <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
+            <Touchable onClick={() => shiftMonth(-1)} style={{ width: 30, height: 30, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <ChevronLeft size={16} color={C.onSurfaceVariant} />
+            </Touchable>
+            <span style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 13.5 }}>{monthLabel}</span>
+            <Touchable onClick={() => shiftMonth(1)} style={{ width: 30, height: 30, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <ChevronRight size={16} color={C.onSurfaceVariant} />
+            </Touchable>
+          </div>
+          <div className="grid grid-cols-7 gap-1 mb-1">
+            {WEEKDAY_LETTERS.map((w, i) => (
+              <div key={i} style={{ textAlign: "center", fontFamily: mono, fontSize: 9.5, color: C.faint }}>{w}</div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7 gap-1">
+            {cells.map((d, i) => {
+              if (!d) return <div key={i} />;
+              const ds = fmtDate(d);
+              const isSel = ds === selected;
+              const isTodayCell = ds === todayStr;
+              const dotted = !!hasTasks?.(ds);
+              return (
+                <Touchable
+                  key={i}
+                  onClick={() => { onSelect(ds); setOpen(false); }}
+                  style={{
+                    aspectRatio: "1", borderRadius: 10,
+                    background: isSel ? C.accent : "transparent",
+                    border: isTodayCell && !isSel ? `1px solid ${C.accent}` : "1px solid transparent",
+                    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
+                  }}
+                >
+                  <span style={{ fontFamily: mono, fontSize: 11, color: isSel ? C.surface : C.onSurface, fontWeight: isTodayCell ? 800 : 500 }}>
+                    {d.getDate()}
+                  </span>
+                  <div style={{ width: 4, height: 4, borderRadius: "50%", background: dotted ? (isSel ? C.surface : C.accent) : "transparent" }} />
+                </Touchable>
+              );
+            })}
+          </div>
+          <Touchable
+            onClick={() => { onSelect(todayStr); setOpen(false); }}
+            style={{
+              marginTop: 10, width: "100%", padding: "8px 0", borderRadius: 10,
+              border: `1px solid ${C.outlineVariant}`,
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            }}
+          >
+            <Calendar size={13} color={C.accent} />
+            <span style={{ fontFamily: sans, fontWeight: 600, fontSize: 12.5, color: C.accent }}>Jump to Today</span>
+          </Touchable>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PlannerTab({ s, set }) {
   const [selected, setSelected] = useState(() => fmtDate(new Date()));
 
   const selDate = new Date(selected + "T00:00:00");
-  const isToday = selected === fmtDate(new Date());
   const dayTasks = s.days?.[selected] || [];
   const unlisted = s.unlisted || [];
 
@@ -2085,14 +2467,11 @@ function PlannerTab({ s, set }) {
         >
           <ChevronLeft size={18} color={C.onSurfaceVariant} />
         </Touchable>
-        <div className="flex flex-col items-center">
-          <span style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 15 }}>
-            {selDate.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
-          </span>
-          {isToday && (
-            <span style={{ fontFamily: mono, fontSize: 10, fontWeight: 700, color: C.accent, letterSpacing: 0.5 }}>TODAY</span>
-          )}
-        </div>
+        <PlannerDatePicker
+          selected={selected}
+          onSelect={setSelected}
+          hasTasks={(ds) => (s.days?.[ds] || []).length > 0}
+        />
         <Touchable
           onClick={() => shiftDay(1)}
           style={{ width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}
@@ -3495,13 +3874,6 @@ function LevelCard({ name, onNameChange, overall, totalXP, today, mode, status, 
 }
 
 function TopAppBar({ syncStatus, onMenu, mode, onToggleTheme, readOnly }) {
-  const statusIcon =
-    syncStatus === "saving" ? <Loader2 size={16} color={C.onSurfaceVariant} className="md-spin" /> :
-    syncStatus === "error" ? <CloudOff size={16} color={C.danger} /> :
-    syncStatus === "unsaved" ? <CloudOff size={16} color={C.wealth} /> :
-    <CheckCircle2 size={16} color={C.resolve} />;
-  const statusLabel =
-    syncStatus === "saving" ? "Syncing" : syncStatus === "error" ? "Sync failed" : syncStatus === "unsaved" ? "Unsaved" : "Synced";
   return (
     <div className="flex items-center justify-between px-3" style={{ height: 60, flexShrink: 0 }}>
       <div className="flex items-center gap-1.5 pl-1.5">
@@ -3528,12 +3900,6 @@ function TopAppBar({ syncStatus, onMenu, mode, onToggleTheme, readOnly }) {
         )}
       </div>
       <div className="flex items-center gap-2">
-        {!readOnly && (
-          <div className="flex items-center gap-1">
-            {statusIcon}
-            <span style={{ fontFamily: mono, fontSize: 10.5, color: C.onSurfaceVariant }}>{statusLabel}</span>
-          </div>
-        )}
         <ThemeToggle mode={mode} onToggle={onToggleTheme} />
         <Touchable onClick={onMenu} style={{ width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <MoreVertical size={18} color={C.onSurfaceVariant} />
@@ -3617,7 +3983,7 @@ export default function LifeRPG() {
   // only profile. readCodeHash may still be present on older profiles —
   // see normalizeReaders().
   const [authConfig, setAuthConfig] = useState(undefined);
-  const [authenticated, setAuthenticated] = useState(!FIREBASE_ENABLED);
+  const [authenticated, setAuthenticated] = useState(!SYNC_ENABLED);
   const [authError, setAuthError] = useState(null);
   const [authBusy, setAuthBusy] = useState(false);
 
@@ -3663,7 +4029,7 @@ export default function LifeRPG() {
   // yet and, once it does, for its (hashed) write/read codes — so codes
   // changed on one device take effect everywhere immediately.
   useEffect(() => {
-    if (!FIREBASE_ENABLED) return;
+    if (!SYNC_ENABLED) return;
     const ref = doc(db, QUESTS_COLLECTION, AUTH_DOC_ID);
     const unsub = onSnapshot(
       ref,
@@ -3676,7 +4042,7 @@ export default function LifeRPG() {
   // Validate whatever code this device has cached against the live
   // authConfig. Never creates anything — only the setup flow does that.
   useEffect(() => {
-    if (!FIREBASE_ENABLED) return;
+    if (!SYNC_ENABLED) return;
     if (authConfig === undefined) return;
     if (!code) { setAuthenticated(false); return; }
 
@@ -3723,7 +4089,7 @@ export default function LifeRPG() {
   useEffect(() => {
     if (!authenticated) return;
     setLoaded(false);
-    if (!FIREBASE_ENABLED) {
+    if (!SYNC_ENABLED) {
       let initial = defaultState();
       if (typeof window !== "undefined") {
         try {
@@ -3916,7 +4282,7 @@ export default function LifeRPG() {
   const saveNow = useCallback(() => {
     if (readOnly || !state) return;
     setSyncStatus("saving");
-    if (!FIREBASE_ENABLED) {
+    if (!SYNC_ENABLED) {
       try {
         if (typeof window !== "undefined") localStorage.setItem(LOCAL_STATE_KEY, JSON.stringify(state));
         setDirty(false);
@@ -3951,7 +4317,7 @@ export default function LifeRPG() {
 
   const confirmReset = useCallback(async () => {
     setResetBusy(true);
-    if (!FIREBASE_ENABLED) {
+    if (!SYNC_ENABLED) {
       const initial = defaultState();
       try {
         if (typeof window !== "undefined") localStorage.setItem(LOCAL_STATE_KEY, JSON.stringify(initial));
@@ -4128,7 +4494,7 @@ export default function LifeRPG() {
                 boxShadow: "0 8px 24px rgba(0,0,0,0.5)", overflow: "hidden",
               }}
             >
-              {FIREBASE_ENABLED && (
+              {SYNC_ENABLED && (
                 <Touchable onClick={copyCode} style={{ display: "block" }}>
                   <div className="flex items-center gap-3 px-4 py-3.5">
                     <Copy size={16} color={C.onSurfaceVariant} />
@@ -4138,7 +4504,7 @@ export default function LifeRPG() {
                   </div>
                 </Touchable>
               )}
-              {FIREBASE_ENABLED && (
+              {SYNC_ENABLED && (
                 <Touchable onClick={changeCode} style={{ display: "block" }}>
                   <div className="flex items-center gap-3 px-4 py-3.5">
                     <KeyRound size={16} color={C.onSurfaceVariant} />
@@ -4146,7 +4512,7 @@ export default function LifeRPG() {
                   </div>
                 </Touchable>
               )}
-              {FIREBASE_ENABLED && !readOnly && (
+              {SYNC_ENABLED && !readOnly && (
                 <Touchable onClick={() => { setMenuOpen(false); setCodesError(null); setNewWrite(""); setCodesPanelOpen(true); }} style={{ display: "block" }}>
                   <div className="flex items-center gap-3 px-4 py-3.5">
                     <KeyRound size={16} color={C.onSurfaceVariant} />
@@ -4154,7 +4520,7 @@ export default function LifeRPG() {
                   </div>
                 </Touchable>
               )}
-              {FIREBASE_ENABLED && !readOnly && (
+              {SYNC_ENABLED && !readOnly && (
                 <Touchable onClick={openReadersPanel} style={{ display: "block" }}>
                   <div className="flex items-center gap-3 px-4 py-3.5">
                     <Users size={16} color={C.onSurfaceVariant} />
