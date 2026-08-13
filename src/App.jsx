@@ -3518,6 +3518,39 @@ function ThemeToggle({ mode, onToggle }) {
 }
 
 /* ---------------------------------------------------------------
+   QUOTE BUTTON — top-bar sparkle button with a continuous "rotating
+   border" idle animation: a thin conic gradient ring sits directly on
+   the button's own edge and spins slowly, so it reads as "something's
+   here" without ever leaving the button's footprint.
+
+   The gradient is painted on the Touchable itself via padding (so the
+   ring IS the border, not an overlay) — a solid inner circle sits on
+   top so only a thin ring of the gradient shows through.
+--------------------------------------------------------------- */
+function QuoteButton({ onClick }) {
+  return (
+    <Touchable
+      onClick={onClick}
+      style={{
+        width: 36, height: 36, borderRadius: "50%", padding: 1.5, boxSizing: "border-box",
+        background: `conic-gradient(from 0deg, ${C.accent}, ${C.wisdom}, ${C.accent})`,
+        animation: "quote-spin 3s linear infinite",
+      }}
+    >
+      <div
+        style={{
+          width: "100%", height: "100%", borderRadius: "50%",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: C.containerHigh,
+        }}
+      >
+        <Sparkles size={15} color={C.accent} strokeWidth={2.2} />
+      </div>
+    </Touchable>
+  );
+}
+
+/* ---------------------------------------------------------------
    SECRET CODE GATE — shown before any data loads.
    setupMode=true: no profile exists yet anywhere — the very first
    person here sets BOTH a write code and a read code at once, and
@@ -3976,7 +4009,7 @@ function LevelCard({ name, onNameChange, overall, totalXP, today, mode, status, 
   );
 }
 
-function TopAppBar({ syncStatus, onMenu, mode, onToggleTheme, readOnly }) {
+function TopAppBar({ syncStatus, onMenu, mode, onToggleTheme, readOnly, onQuoteClick, showQuoteButton }) {
   return (
     <div className="flex items-center justify-between px-3" style={{ height: 60, flexShrink: 0 }}>
       <div className="flex items-center gap-1.5 pl-1.5">
@@ -4003,6 +4036,7 @@ function TopAppBar({ syncStatus, onMenu, mode, onToggleTheme, readOnly }) {
         )}
       </div>
       <div className="flex items-center gap-2">
+        {showQuoteButton && <QuoteButton onClick={onQuoteClick} />}
         <ThemeToggle mode={mode} onToggle={onToggleTheme} />
         <Touchable onClick={onMenu} style={{ width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <MoreVertical size={18} color={C.onSurfaceVariant} />
@@ -4057,52 +4091,147 @@ function BottomNav({ tab, setTab, tabs }) {
   );
 }
 
+/* Splits quote text into sentences so the reveal can stagger sentence-by-
+   sentence rather than by hand-cut lines — sentences still wrap naturally
+   at whatever width the card ends up, so alignment never looks jagged. */
+function splitSentences(text) {
+  const matches = text.match(/[^.!?]+[.!?]*/g);
+  return (matches || [text]).map((s) => s.trim()).filter(Boolean);
+}
+
 /* ---------------------------------------------------------------
-   QUOTE SHEET — bottom sheet that slides up over the app when the
-   floating quote button is tapped. Shows the day's quote (from
-   getDailyQuote, see above) with its author.
+   QUOTE SHEET — centered "Spark of the day" reveal shown when the
+   top-bar quote button is tapped. Two rotating diamond rings (current
+   rank color, and previous rank color if there is one) scale/fade in
+   behind the card and settle into a slow, opposite-direction spin;
+   the card itself fades in a beat later, and the quote text reveals
+   sentence-by-sentence rather than all at once.
+
+   The card has a fixed width but automatic height (no fixed box), so
+   it grows for longer quotes instead of overflowing — with a max-height
+   + scroll fallback as a safety net for unusually long entries. The
+   diamond rings size themselves relative to the card via % dimensions,
+   so they still frame it correctly whether it's one line or five.
+
+   Mounted only while open (rather than kept in the DOM and faded), so
+   every open re-triggers the full entrance sequence from the start.
 --------------------------------------------------------------- */
-function QuoteSheet({ open, onClose, today }) {
+function QuoteSheet({ open, onClose, today, rankColor, prevRankColor }) {
+  if (!open) return null;
   const quote = getDailyQuote(today);
+  const sentences = splitSentences(quote.text);
+  const ringGradient = `linear-gradient(135deg, ${rankColor}, ${blend(rankColor, "#ffffff", 55)})`;
+
   return (
     <>
       <div
         onClick={onClose}
         style={{
           position: "fixed", inset: 0, zIndex: 40,
-          background: "rgba(0,0,0,0.55)",
-          opacity: open ? 1 : 0,
-          pointerEvents: open ? "auto" : "none",
-          transition: "opacity 0.25s ease",
+          background: "rgba(0,0,0,0.6)",
+          animation: "quote-backdrop-in 0.2s ease",
         }}
       />
       <div
         style={{
-          position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 41,
-          maxWidth: 480, margin: "0 auto",
-          background: C.containerHighest,
-          borderTopLeftRadius: 22, borderTopRightRadius: 22,
-          border: `1px solid ${C.outlineVariant}`, borderBottom: "none",
-          padding: "10px 22px 30px",
-          transform: open ? "translateY(0)" : "translateY(100%)",
-          pointerEvents: open ? "auto" : "none",
-          transition: "transform 0.32s cubic-bezier(0.2,0.9,0.3,1.2)",
-          boxShadow: "0 -12px 32px rgba(0,0,0,0.45)",
+          position: "fixed", inset: 0, zIndex: 41,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          padding: "0 28px", pointerEvents: "none",
         }}
       >
-        <div style={{ width: 36, height: 4, borderRadius: 3, background: C.outline, margin: "4px auto 18px" }} />
-        <div className="flex items-center gap-2" style={{ marginBottom: 14 }}>
-          <Sparkles size={15} color={C.accent} />
-          <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 11.5, letterSpacing: 0.5, color: C.faint }}>
-            QUOTE OF THE DAY
-          </span>
+        <div
+          style={{
+            position: "relative", width: 290,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            pointerEvents: "auto",
+          }}
+        >
+          {/* previous-rank diamond — bigger, dimmer, spins the opposite way
+              so the two rings never sync up and look mechanical */}
+          {prevRankColor && (
+            <div
+              style={{
+                position: "absolute", width: "112%", height: "128%",
+                borderRadius: 32, border: "2px solid transparent",
+                borderImage: `linear-gradient(135deg, ${prevRankColor}, ${prevRankColor}) 1`,
+                transform: "rotate(45deg) scale(0)", opacity: 0,
+                animation: "quote-ring-in-outer 0.6s cubic-bezier(0.2,0.9,0.3,1.2) 0.1s forwards, quote-ring-spin-rev 11s linear 0.7s infinite",
+                pointerEvents: "none",
+              }}
+            />
+          )}
+          {/* current-rank diamond */}
+          <div
+            style={{
+              position: "absolute", width: "104%", height: "120%",
+              borderRadius: 32, border: "2px solid transparent",
+              borderImage: `${ringGradient} 1`,
+              transform: "rotate(45deg) scale(0)", opacity: 0,
+              animation: "quote-ring-in 0.6s cubic-bezier(0.2,0.9,0.3,1.2) forwards, quote-ring-spin 8s linear 0.6s infinite",
+              pointerEvents: "none",
+            }}
+          />
+          {/* corner spark glints — small flashes at the diamond's points,
+              staggered so they read as intermittent static discharge */}
+          {[
+            { top: -2, left: "50%", marginLeft: -3, color: rankColor, delay: 1.1 },
+            { top: "50%", right: -2, marginTop: -3, color: prevRankColor || rankColor, delay: 1.7 },
+            { bottom: -2, left: "50%", marginLeft: -3, color: rankColor, delay: 2.3 },
+            { top: "50%", left: -2, marginTop: -3, color: prevRankColor || rankColor, delay: 2.9 },
+          ].map((g, i) => (
+            <div
+              key={i}
+              style={{
+                position: "absolute", width: 6, height: 6, borderRadius: "50%",
+                background: g.color, boxShadow: `0 0 6px ${g.color}`,
+                top: g.top, bottom: g.bottom, left: g.left, right: g.right, marginTop: g.marginTop, marginLeft: g.marginLeft,
+                opacity: 0, animation: `quote-glint 2.4s ease-in-out ${g.delay}s infinite`,
+                pointerEvents: "none",
+              }}
+            />
+          ))}
+
+          <div
+            style={{
+              position: "relative", width: 290,
+              maxHeight: "60vh", overflowY: "auto",
+              background: `linear-gradient(160deg, ${mix(rankColor, 8)}, transparent 55%), ${C.containerHighest}`,
+              border: `1px solid ${C.outlineVariant}`, borderRadius: 22,
+              padding: "20px 22px", boxShadow: "0 20px 48px rgba(0,0,0,0.5)",
+              opacity: 0, transform: "scale(0.92)",
+              animation: "quote-card-in 0.5s ease-out 0.55s forwards",
+            }}
+          >
+            <div className="flex items-center gap-2" style={{ marginBottom: 12 }}>
+              <Sparkles size={14} color={rankColor} />
+              <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 10.5, letterSpacing: 0.5, color: C.faint }}>
+                SPARK OF THE DAY
+              </span>
+            </div>
+            <p style={{ color: C.onSurface, fontFamily: sans, fontSize: 15.5, fontStyle: "italic", lineHeight: 1.6, margin: "0 0 12px" }}>
+              "{sentences.map((s, i) => (
+                <span
+                  key={i}
+                  style={{
+                    opacity: 0,
+                    animation: `quote-line-in 0.4s ease-out ${0.7 + i * 0.15}s forwards`,
+                  }}
+                >
+                  {s}{i < sentences.length - 1 ? " " : ""}
+                </span>
+              ))}"
+            </p>
+            <p
+              style={{
+                color: rankColor, fontFamily: sans, fontSize: 13, fontWeight: 600, margin: 0, textAlign: "right",
+                opacity: 0,
+                animation: `quote-line-in 0.4s ease-out ${0.7 + sentences.length * 0.15 + 0.1}s forwards`,
+              }}
+            >
+              — {quote.author}
+            </p>
+          </div>
         </div>
-        <p style={{ color: C.onSurface, fontFamily: sans, fontSize: 16, fontStyle: "italic", lineHeight: 1.55, margin: "0 0 12px" }}>
-          "{quote.text}"
-        </p>
-        <p style={{ color: C.accent, fontFamily: sans, fontSize: 13, fontWeight: 600, margin: 0, textAlign: "right" }}>
-          — {quote.author}
-        </p>
       </div>
     </>
   );
@@ -4596,6 +4725,8 @@ export default function LifeRPG() {
   // whole UI's accent shifts as the player's overall rank climbs.
   const { rank: appRank } = rankInfo(wScore + vScore + weScore + rScore);
   const rankTint = rankColor(appRank, mode);
+  const prevRankBandIdx = RANK_BANDS.findIndex((b) => b.rank === appRank) - 1;
+  const prevRankTint = prevRankBandIdx >= 0 ? rankColor(RANK_BANDS[prevRankBandIdx].rank, mode) : null;
 
   const tabs = [
     { id: "dashboard", label: "Home", icon: Home, color: C.accent },
@@ -4632,10 +4763,39 @@ export default function LifeRPG() {
           @keyframes md-ripple { to { transform: scale(1); opacity: 0; } }
           @keyframes md-spin { to { transform: rotate(360deg); } }
           .md-spin { animation: md-spin 0.9s linear infinite; }
+          @keyframes quote-spin { to { transform: rotate(360deg); } }
+          @keyframes quote-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+          @keyframes quote-ring-in {
+            from { transform: rotate(45deg) scale(0); opacity: 0; }
+            to { transform: rotate(45deg) scale(1); opacity: 0.9; }
+          }
+          @keyframes quote-ring-spin { from { transform: rotate(45deg); } to { transform: rotate(405deg); } }
+          @keyframes quote-ring-in-outer {
+            from { transform: rotate(45deg) scale(0); opacity: 0; }
+            to { transform: rotate(45deg) scale(1); opacity: 0.5; }
+          }
+          @keyframes quote-ring-spin-rev { from { transform: rotate(45deg); } to { transform: rotate(-315deg); } }
+          @keyframes quote-card-in {
+            from { opacity: 0; transform: scale(0.92); }
+            to { opacity: 1; transform: scale(1); }
+          }
+          @keyframes quote-line-in {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+          }
+          @keyframes quote-glint { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
           ::-webkit-scrollbar { width: 0; height: 0; }
         `}</style>
 
-        <TopAppBar syncStatus={syncStatus} onMenu={() => setMenuOpen((o) => !o)} mode={mode} onToggleTheme={toggleTheme} readOnly={readOnly} />
+        <TopAppBar
+          syncStatus={syncStatus}
+          onMenu={() => setMenuOpen((o) => !o)}
+          mode={mode}
+          onToggleTheme={toggleTheme}
+          readOnly={readOnly}
+          onQuoteClick={() => setQuoteOpen(true)}
+          showQuoteButton={tab === "dashboard"}
+        />
 
         {/* overflow menu */}
         {menuOpen && (
@@ -5112,27 +5272,10 @@ export default function LifeRPG() {
           {tab === "planner" && (readOnly ? <RestrictedTab label="Planner" /> : <PlannerTab s={state.planner} set={update} />)}
           {tab === "calendar" && <CalendarTab state={state} set={update} />}
 
-          {/* FAB — Quote button (dashboard only) and Save button share the
-              same bottom-right slot and crossfade: Quote shows while the
-              state is clean, Save takes over the instant something changes. */}
+          {/* FAB — Save button (bottom-right slot). The Quote button now
+              lives in the top bar, so this slot is Save-only: it fades
+              in the instant something changes and fades out once clean. */}
           <div style={{ position: "sticky", bottom: 16, height: 54, pointerEvents: "none" }}>
-            {tab === "dashboard" && (
-              <Touchable
-                onClick={() => setQuoteOpen(true)}
-                style={{
-                  position: "absolute", right: 16, bottom: 0,
-                  pointerEvents: dirty ? "none" : "auto",
-                  background: C.containerHigh, border: `1px solid ${C.outlineVariant}`,
-                  borderRadius: 18, padding: 14, display: "flex", alignItems: "center", justifyContent: "center",
-                  boxShadow: "0 8px 22px rgba(0,0,0,0.28)",
-                  opacity: dirty ? 0 : 1,
-                  transform: dirty ? "scale(0.8)" : "scale(1)",
-                  transition: "all 0.2s ease",
-                }}
-              >
-                <Sparkles size={18} color={C.accent} strokeWidth={2.2} />
-              </Touchable>
-            )}
             {!readOnly && (
               <Touchable
                 onClick={saveNow}
@@ -5161,7 +5304,7 @@ export default function LifeRPG() {
           </div>
         </div>
 
-        <QuoteSheet open={quoteOpen} onClose={() => setQuoteOpen(false)} today={today} />
+        <QuoteSheet open={quoteOpen} onClose={() => setQuoteOpen(false)} today={today} rankColor={rankTint} prevRankColor={prevRankTint} />
         <BottomNav tab={tab} setTab={setTab} tabs={tabs.filter((t) => t.id !== "achievements" && t.id !== "diet" && t.id !== "planner" && t.id !== "calendar")} />
       </div>
     </div>
