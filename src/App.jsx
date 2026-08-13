@@ -4209,7 +4209,7 @@ function QuoteSheet({ open, onClose, today, rankColor, prevRankColor, starPalett
             <div
               style={{
                 position: "absolute", top: -40, bottom: -40, left: -18, right: -18,
-                borderRadius: "50%", boxSizing: "border-box", padding: 2,
+                borderRadius: 56, boxSizing: "border-box", padding: 3,
                 background: `linear-gradient(135deg, ${prevRankColor}, ${prevRankColor})`,
                 WebkitMask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
                 WebkitMaskComposite: "xor",
@@ -4224,7 +4224,7 @@ function QuoteSheet({ open, onClose, today, rankColor, prevRankColor, starPalett
           <div
             style={{
               position: "absolute", top: -26, bottom: -26, left: -11, right: -11,
-              borderRadius: "50%", boxSizing: "border-box", padding: 2,
+              borderRadius: 44, boxSizing: "border-box", padding: 3,
               background: ringGradient,
               WebkitMask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
               WebkitMaskComposite: "xor",
@@ -4314,8 +4314,8 @@ function QuoteSheet({ open, onClose, today, rankColor, prevRankColor, starPalett
               edge, which is exactly where it'd be most visible. */}
           <div
             style={{
-              position: "absolute", top: -1, bottom: -1, left: -1, right: -1,
-              borderRadius: 23, boxSizing: "border-box", padding: 1.5,
+              position: "absolute", top: -1.5, bottom: -1.5, left: -1.5, right: -1.5,
+              borderRadius: 23, boxSizing: "border-box", padding: 2.5,
               background: mergeGradient,
               WebkitMask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
               WebkitMaskComposite: "xor",
