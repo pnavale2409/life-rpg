@@ -4195,15 +4195,27 @@ function QuoteSheet({ open, onClose, today, rankColor, prevRankColor, starPalett
           {/* previous-rank ring — bigger, dimmer, spins the opposite way so
               the two rings never sync up and look mechanical. Sized with
               fixed-pixel insets (not %) so it tracks the card's real height
-              even though that height is automatic. */}
+              even though that height is automatic.
+
+              Built with background + mask (a "punch a hole in a filled
+              shape" trick) rather than border-image: border-image ignores
+              border-radius entirely, which is what was leaving hard square
+              corners under the rotation no matter how high the radius went.
+              Mask-based rings respect border-radius properly. border-radius
+              "50%" on a non-square box always yields a true ellipse (zero
+              flat edges), unlike a large fixed-px radius, which clamps into
+              a flat-sided stadium shape. */}
           {prevRankColor && (
             <div
               style={{
                 position: "absolute", top: -40, bottom: -40, left: -18, right: -18,
-                borderRadius: 999, border: "2px solid transparent",
-                borderImage: `linear-gradient(135deg, ${prevRankColor}, ${prevRankColor}) 1`,
+                borderRadius: "50%", boxSizing: "border-box", padding: 2,
+                background: `linear-gradient(135deg, ${prevRankColor}, ${prevRankColor})`,
+                WebkitMask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
+                WebkitMaskComposite: "xor",
+                maskComposite: "exclude",
                 transform: "rotate(45deg) scale(0)", opacity: 0,
-                animation: `quote-ring-in-outer 0.6s cubic-bezier(0.2,0.9,0.3,1.2) 0.1s forwards, quote-ring-spin-rev 11s linear 0.7s infinite, quote-ring-out 0.5s ease-in ${mergeAt}s forwards`,
+                animation: `quote-ring-in-outer 0.6s cubic-bezier(0.2,0.9,0.3,1.2) 0.1s forwards, quote-ring-spin-rev 11s linear 0.7s infinite, quote-ring-out 0.45s ease-in ${mergeAt}s forwards`,
                 pointerEvents: "none",
               }}
             />
@@ -4212,10 +4224,13 @@ function QuoteSheet({ open, onClose, today, rankColor, prevRankColor, starPalett
           <div
             style={{
               position: "absolute", top: -26, bottom: -26, left: -11, right: -11,
-              borderRadius: 999, border: "2px solid transparent",
-              borderImage: `${ringGradient} 1`,
+              borderRadius: "50%", boxSizing: "border-box", padding: 2,
+              background: ringGradient,
+              WebkitMask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
+              WebkitMaskComposite: "xor",
+              maskComposite: "exclude",
               transform: "rotate(45deg) scale(0)", opacity: 0,
-              animation: `quote-ring-in 0.6s cubic-bezier(0.2,0.9,0.3,1.2) forwards, quote-ring-spin 8s linear 0.6s infinite, quote-ring-out 0.5s ease-in ${mergeAt}s forwards`,
+              animation: `quote-ring-in 0.6s cubic-bezier(0.2,0.9,0.3,1.2) forwards, quote-ring-spin 8s linear 0.6s infinite, quote-ring-out 0.45s ease-in ${mergeAt}s forwards`,
               pointerEvents: "none",
             }}
           />
@@ -4290,16 +4305,23 @@ function QuoteSheet({ open, onClose, today, rankColor, prevRankColor, starPalett
             </p>
           </div>
 
-          {/* merge border — fades in exactly as the rings fade out, tracing
-              the card's own rounded-rect shape (not a diamond) with fixed
-              pixel insets so it hugs the card at any height. */}
+          {/* merge border — fades in right after the rings finish
+              disappearing, tracing the card's own rounded-rect shape with
+              fixed pixel insets so it hugs the card at any height. Also
+              mask-based rather than border-image, for the same reason as
+              the rings above — border-image would ignore the card's
+              border-radius and show hard square corners right on the card
+              edge, which is exactly where it'd be most visible. */}
           <div
             style={{
               position: "absolute", top: -1, bottom: -1, left: -1, right: -1,
-              borderRadius: 23, border: "1.5px solid transparent",
-              borderImage: `${mergeGradient} 1`,
+              borderRadius: 23, boxSizing: "border-box", padding: 1.5,
+              background: mergeGradient,
+              WebkitMask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
+              WebkitMaskComposite: "xor",
+              maskComposite: "exclude",
               opacity: 0, pointerEvents: "none",
-              animation: `quote-border-in 0.5s ease-out ${mergeAt}s forwards`,
+              animation: `quote-border-in 0.45s ease-out ${mergeAt + 0.35}s forwards`,
             }}
           />
         </div>
