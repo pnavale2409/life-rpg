@@ -156,6 +156,97 @@ function mix(colorVar, pct) {
 function blend(colorA, colorB, pctA = 50) {
   return `color-mix(in srgb, ${colorA} ${pctA}%, ${colorB})`;
 }
+/* ---------------------------------------------------------------
+   DAILY QUOTE — a new motivational quote (with author) every day,
+   with no repeats until every quote in the list has been shown
+   once. Pure function of the date, so it needs no stored "already
+   seen" state and stays in sync across devices automatically.
+
+   How it works:
+   - Every quote gets shown exactly once per "cycle" (one cycle =
+     QUOTES.length days). Within a cycle the order is a shuffle of
+     all quotes, so nothing repeats until the cycle finishes.
+   - The shuffle is seeded by the cycle number (via a tiny seeded
+     RNG, mulberry32), so cycle 0 gets one order, cycle 1 gets a
+     different order, etc. — it won't just loop the same sequence
+     forever once every quote has been used once.
+--------------------------------------------------------------- */
+const QUOTES = [
+  { text: "The only way to do great work is to love what you do.", author: "Steve Jobs" },
+  { text: "It always seems impossible until it's done.", author: "Nelson Mandela" },
+  { text: "Success is not final, failure is not fatal: it is the courage to continue that counts.", author: "Winston Churchill" },
+  { text: "I have not failed. I've just found 10,000 ways that won't work.", author: "Thomas Edison" },
+  { text: "The way to get started is to quit talking and begin doing.", author: "Walt Disney" },
+  { text: "Your time is limited, so don't waste it living someone else's life.", author: "Steve Jobs" },
+  { text: "Life is what happens to you while you're busy making other plans.", author: "John Lennon" },
+  { text: "The future belongs to those who believe in the beauty of their dreams.", author: "Eleanor Roosevelt" },
+  { text: "It does not matter how slowly you go as long as you do not stop.", author: "Confucius" },
+  { text: "If you are working on something exciting that you really care about, you don't have to be pushed.", author: "Steve Jobs" },
+  { text: "The only limit to our realization of tomorrow is our doubts of today.", author: "Franklin D. Roosevelt" },
+  { text: "Do not wait to strike till the iron is hot, but make it hot by striking.", author: "William Butler Yeats" },
+  { text: "Whether you think you can or you think you can't, you're right.", author: "Henry Ford" },
+  { text: "I find that the harder I work, the more luck I seem to have.", author: "Thomas Jefferson" },
+  { text: "Failure is simply the opportunity to begin again, this time more intelligently.", author: "Henry Ford" },
+  { text: "The best way to predict the future is to create it.", author: "Peter Drucker" },
+  { text: "It is during our darkest moments that we must focus to see the light.", author: "Aristotle" },
+  { text: "Don't be afraid to give up the good to go for the great.", author: "John D. Rockefeller" },
+  { text: "The only person you are destined to become is the person you decide to be.", author: "Ralph Waldo Emerson" },
+  { text: "Success usually comes to those who are too busy to be looking for it.", author: "Henry David Thoreau" },
+  { text: "Believe you can and you're halfway there.", author: "Theodore Roosevelt" },
+  { text: "I've missed more than 9,000 shots in my career, and that is why I succeed.", author: "Michael Jordan" },
+  { text: "Twenty years from now you will be more disappointed by the things you didn't do than by the ones you did.", author: "Mark Twain" },
+  { text: "Just don't give up trying to do what you really want to do.", author: "Ella Fitzgerald" },
+  { text: "The secret of getting ahead is getting started.", author: "Mark Twain" },
+  { text: "Opportunities don't happen. You create them.", author: "Chris Grosser" },
+  { text: "Don't watch the clock; do what it does. Keep going.", author: "Sam Levenson" },
+  { text: "Setting goals is the first step in turning the invisible into the visible.", author: "Tony Robbins" },
+  { text: "You miss 100 percent of the shots you don't take.", author: "Wayne Gretzky" },
+  { text: "The harder you work for something, the greater you'll feel when you achieve it.", author: "Anonymous" },
+  { text: "Dream big and dare to fail.", author: "Norman Vaughan" },
+  { text: "A person who never made a mistake never tried anything new.", author: "Albert Einstein" },
+  { text: "The way to get started is to quit talking and begin doing.", author: "Walt Disney" },
+  { text: "Everything you've ever wanted is on the other side of fear.", author: "George Addair" },
+  { text: "Hardships often prepare ordinary people for an extraordinary destiny.", author: "C.S. Lewis" },
+  { text: "You are never too old to set another goal or to dream a new dream.", author: "C.S. Lewis" },
+  { text: "If you really look closely, most overnight successes took a long time.", author: "Steve Jobs" },
+  { text: "The best revenge is massive success.", author: "Frank Sinatra" },
+  { text: "People who are crazy enough to think they can change the world, are the ones who do.", author: "Steve Jobs" },
+  { text: "Perseverance is not a long race; it is many short races one after the other.", author: "Walter Elliot" },
+];
+
+/* Small deterministic PRNG (Mulberry32) — same seed always produces
+   the same sequence, so the "shuffle" for a given cycle is stable
+   across devices/reloads without storing anything. */
+function mulberry32(seed) {
+  let a = seed;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function seededShuffle(arr, seed) {
+  const rng = mulberry32(seed);
+  const out = arr.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+function getDailyQuote(date) {
+  const epochDay = Math.floor(dateOnly(date).getTime() / 86400000);
+  const n = QUOTES.length;
+  const cycle = Math.floor(epochDay / n);
+  const posInCycle = ((epochDay % n) + n) % n;
+  const order = seededShuffle(
+    Array.from({ length: n }, (_, i) => i),
+    cycle + 1 // +1 so cycle 0 isn't seeded with 0 (mulberry32 handles 0 fine, but keeps seeds obviously distinct)
+  );
+  return QUOTES[order[posInCycle]];
+}
+
 function weekdayCount(start, end) {
   let n = 0;
   let d = new Date(start);
@@ -1186,7 +1277,7 @@ function InvestMonthCard({ label, monthState, defaultOpen, onToggleCategory }) {
       }}
     >
       <Touchable onClick={() => setOpen((o) => !o)} style={{ display: "block" }}>
-        <div className="flex items-center gap-3 px-4 py-3.5">
+        <div className="flex items-center gap-3 px-3 py-3.5">
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between" style={{ marginBottom: 7 }}>
               <span style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 14 }}>{label}</span>
@@ -1218,7 +1309,7 @@ function InvestMonthCard({ label, monthState, defaultOpen, onToggleCategory }) {
         </div>
       </Touchable>
       {open && (
-        <div className="px-3 pb-3 flex flex-col gap-1.5">
+        <div className="px-1.5 pb-3 flex flex-col gap-1.5">
           {INVEST_CATEGORIES.map((c) => {
             const checked = typeof monthState === "object" && !!monthState?.[c.key];
             const markedLabel = checked ? investMarkedLabel(monthState[c.key]) : null;
@@ -1236,7 +1327,7 @@ function InvestMonthCard({ label, monthState, defaultOpen, onToggleCategory }) {
                   transition: "background 0.15s ease, border-color 0.15s ease",
                 }}
               >
-                <div className="flex items-center gap-3 px-3 py-2.5">
+                <div className="flex items-center gap-3 px-2.5 py-2.5">
                   <div
                     style={{
                       width: 34, height: 34, borderRadius: 10, flexShrink: 0,
@@ -2357,21 +2448,25 @@ function PlannerDatePicker({ selected, onSelect, hasTasks }) {
       <Touchable
         onClick={openPicker}
         style={{
-          borderRadius: 12, padding: "4px 12px",
-          display: "flex", flexDirection: "column", alignItems: "center",
+          borderRadius: 12, padding: "6px 12px",
+          display: "flex", alignItems: "center",
           background: open ? mix(C.accent, 12) : "transparent",
         }}
       >
         <div className="flex items-center gap-1.5">
           <Calendar size={12} color={C.accent} />
           <span style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 15 }}>
-            {selDate.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+            {isToday
+              ? "Today"
+              : selDate.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
           </span>
+          {isToday && (
+            <span style={{ fontFamily: mono, fontSize: 9.5, fontWeight: 700, color: C.accent, letterSpacing: 0.4 }}>
+              {selDate.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+            </span>
+          )}
           {open ? <ChevronUp size={13} color={C.onSurfaceVariant} /> : <ChevronDown size={13} color={C.onSurfaceVariant} />}
         </div>
-        {isToday && (
-          <span style={{ fontFamily: mono, fontSize: 10, fontWeight: 700, color: C.accent, letterSpacing: 0.5 }}>TODAY</span>
-        )}
       </Touchable>
 
       {open && (
@@ -2470,7 +2565,7 @@ function PlannerTab({ s, set }) {
         <PlannerDatePicker
           selected={selected}
           onSelect={setSelected}
-          hasTasks={(ds) => (s.days?.[ds] || []).length > 0}
+          hasTasks={(ds) => (s.days?.[ds] || []).some((t) => !t.completed)}
         />
         <Touchable
           onClick={() => shiftDay(1)}
@@ -2528,13 +2623,21 @@ function DayPlanCard({ set, selected, dayTasks }) {
 
   const doneCount = dayTasks.filter((t) => t.completed).length;
 
+  // Unmarked tasks first, completed ones sink to the bottom — but keep
+  // each group in its original order (stable sort) so nothing jumps
+  // around within "still to do" or "done" as you check things off.
+  const orderedTasks = dayTasks
+    .map((task, i) => ({ task, i }))
+    .sort((a, b) => (a.task.completed === b.task.completed ? a.i - b.i : a.task.completed ? 1 : -1))
+    .map(({ task }) => task);
+
   return (
     <Mission title="Day Plan" points={dayTasks.length} earned={doneCount} color={C.accent} defaultOpen>
       <div className="flex flex-col gap-2" style={{ marginBottom: 10 }}>
         {dayTasks.length === 0 ? (
           <p style={{ color: C.faint, fontSize: 12.5 }}>No tasks for this day yet — add one below.</p>
         ) : (
-          dayTasks.map((task) => (
+          orderedTasks.map((task) => (
             <div
               key={task.id}
               style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 12, padding: "8px 10px" }}
@@ -3955,6 +4058,57 @@ function BottomNav({ tab, setTab, tabs }) {
 }
 
 /* ---------------------------------------------------------------
+   QUOTE SHEET — bottom sheet that slides up over the app when the
+   floating quote button is tapped. Shows the day's quote (from
+   getDailyQuote, see above) with its author.
+--------------------------------------------------------------- */
+function QuoteSheet({ open, onClose, today }) {
+  const quote = getDailyQuote(today);
+  return (
+    <>
+      <div
+        onClick={onClose}
+        style={{
+          position: "fixed", inset: 0, zIndex: 40,
+          background: "rgba(0,0,0,0.55)",
+          opacity: open ? 1 : 0,
+          pointerEvents: open ? "auto" : "none",
+          transition: "opacity 0.25s ease",
+        }}
+      />
+      <div
+        style={{
+          position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 41,
+          maxWidth: 480, margin: "0 auto",
+          background: C.containerHighest,
+          borderTopLeftRadius: 22, borderTopRightRadius: 22,
+          border: `1px solid ${C.outlineVariant}`, borderBottom: "none",
+          padding: "10px 22px 30px",
+          transform: open ? "translateY(0)" : "translateY(100%)",
+          pointerEvents: open ? "auto" : "none",
+          transition: "transform 0.32s cubic-bezier(0.2,0.9,0.3,1.2)",
+          boxShadow: "0 -12px 32px rgba(0,0,0,0.45)",
+        }}
+      >
+        <div style={{ width: 36, height: 4, borderRadius: 3, background: C.outline, margin: "4px auto 18px" }} />
+        <div className="flex items-center gap-2" style={{ marginBottom: 14 }}>
+          <Sparkles size={15} color={C.accent} />
+          <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 11.5, letterSpacing: 0.5, color: C.faint }}>
+            QUOTE OF THE DAY
+          </span>
+        </div>
+        <p style={{ color: C.onSurface, fontFamily: sans, fontSize: 16, fontStyle: "italic", lineHeight: 1.55, margin: "0 0 12px" }}>
+          "{quote.text}"
+        </p>
+        <p style={{ color: C.accent, fontFamily: sans, fontSize: 13, fontWeight: 600, margin: 0, textAlign: "right" }}>
+          — {quote.author}
+        </p>
+      </div>
+    </>
+  );
+}
+
+/* ---------------------------------------------------------------
    MAIN APP
 --------------------------------------------------------------- */
 export default function LifeRPG() {
@@ -3973,6 +4127,7 @@ export default function LifeRPG() {
   }, [tab]);
   const [dirty, setDirty] = useState(false);
   const [syncStatus, setSyncStatus] = useState("synced");
+  const [quoteOpen, setQuoteOpen] = useState(false);
   const [resetArm, setResetArm] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [codeCopied, setCodeCopied] = useState(false);
@@ -4957,41 +5112,56 @@ export default function LifeRPG() {
           {tab === "planner" && (readOnly ? <RestrictedTab label="Planner" /> : <PlannerTab s={state.planner} set={update} />)}
           {tab === "calendar" && <CalendarTab state={state} set={update} />}
 
-          {/* FAB */}
-          {!readOnly && (
-          <div
-            style={{
-              position: "sticky", bottom: 16, display: "flex", justifyContent: "flex-end",
-              paddingRight: 16, pointerEvents: "none",
-            }}
-          >
-            <Touchable
-              onClick={saveNow}
-              disabled={!dirty || syncStatus === "saving"}
-              style={{
-                position: "relative", overflow: "hidden",
-                pointerEvents: dirty ? "auto" : "none",
-                background: dirty ? `linear-gradient(155deg, ${mix("#fff", 22)}, transparent 60%), ${activeColor}` : C.containerHigh,
-                color: dirty ? C.surface : C.faint,
-                border: dirty ? `1px solid ${mix("#fff", 30)}` : `1px solid ${C.outlineVariant}`,
-                borderRadius: 18,
-                padding: dirty ? "13px 22px" : "14px",
-                display: "flex", alignItems: "center", gap: 8,
-                boxShadow: dirty
-                  ? `0 8px 22px ${mix(activeColor, 45)}, inset 0 1px 0 ${mix("#fff", 35)}`
-                  : "none",
-                opacity: dirty ? 1 : 0,
-                transform: dirty ? "scale(1)" : "scale(0.8)",
-                transition: "all 0.2s ease",
-              }}
-            >
-              {syncStatus === "saving" ? <Loader2 size={18} className="md-spin" /> : <Save size={18} strokeWidth={2.4} />}
-              {dirty && <span style={{ fontFamily: sans, fontWeight: 800, fontSize: 14, letterSpacing: 0.2 }}>Save</span>}
-            </Touchable>
+          {/* FAB — Quote button (dashboard only) and Save button share the
+              same bottom-right slot and crossfade: Quote shows while the
+              state is clean, Save takes over the instant something changes. */}
+          <div style={{ position: "sticky", bottom: 16, height: 54, pointerEvents: "none" }}>
+            {tab === "dashboard" && (
+              <Touchable
+                onClick={() => setQuoteOpen(true)}
+                style={{
+                  position: "absolute", right: 16, bottom: 0,
+                  pointerEvents: dirty ? "none" : "auto",
+                  background: C.containerHigh, border: `1px solid ${C.outlineVariant}`,
+                  borderRadius: 18, padding: 14, display: "flex", alignItems: "center", justifyContent: "center",
+                  boxShadow: "0 8px 22px rgba(0,0,0,0.28)",
+                  opacity: dirty ? 0 : 1,
+                  transform: dirty ? "scale(0.8)" : "scale(1)",
+                  transition: "all 0.2s ease",
+                }}
+              >
+                <Sparkles size={18} color={C.accent} strokeWidth={2.2} />
+              </Touchable>
+            )}
+            {!readOnly && (
+              <Touchable
+                onClick={saveNow}
+                disabled={!dirty || syncStatus === "saving"}
+                style={{
+                  position: "absolute", right: 16, bottom: 0, overflow: "hidden",
+                  pointerEvents: dirty ? "auto" : "none",
+                  background: dirty ? `linear-gradient(155deg, ${mix("#fff", 22)}, transparent 60%), ${activeColor}` : C.containerHigh,
+                  color: dirty ? C.surface : C.faint,
+                  border: dirty ? `1px solid ${mix("#fff", 30)}` : `1px solid ${C.outlineVariant}`,
+                  borderRadius: 18,
+                  padding: dirty ? "13px 22px" : "14px",
+                  display: "flex", alignItems: "center", gap: 8,
+                  boxShadow: dirty
+                    ? `0 8px 22px ${mix(activeColor, 45)}, inset 0 1px 0 ${mix("#fff", 35)}`
+                    : "none",
+                  opacity: dirty ? 1 : 0,
+                  transform: dirty ? "scale(1)" : "scale(0.8)",
+                  transition: "all 0.2s ease",
+                }}
+              >
+                {syncStatus === "saving" ? <Loader2 size={18} className="md-spin" /> : <Save size={18} strokeWidth={2.4} />}
+                {dirty && <span style={{ fontFamily: sans, fontWeight: 800, fontSize: 14, letterSpacing: 0.2 }}>Save</span>}
+              </Touchable>
+            )}
           </div>
-          )}
         </div>
 
+        <QuoteSheet open={quoteOpen} onClose={() => setQuoteOpen(false)} today={today} />
         <BottomNav tab={tab} setTab={setTab} tabs={tabs.filter((t) => t.id !== "achievements" && t.id !== "diet" && t.id !== "planner" && t.id !== "calendar")} />
       </div>
     </div>
