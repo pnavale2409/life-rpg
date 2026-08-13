@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useContext, createContext } from "react";
+import React, { useState, useEffect, useCallback, useRef, useContext, useMemo, createContext } from "react";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { db, QUESTS_COLLECTION } from "./firebase.js";
 import {
@@ -4100,27 +4100,58 @@ function splitSentences(text) {
 }
 
 /* ---------------------------------------------------------------
-   QUOTE SHEET — centered "Spark of the day" reveal shown when the
-   top-bar quote button is tapped. Two rotating diamond rings (current
-   rank color, and previous rank color if there is one) scale/fade in
-   behind the card and settle into a slow, opposite-direction spin;
-   the card itself fades in a beat later, and the quote text reveals
-   sentence-by-sentence rather than all at once.
+   QUOTE SHEET — centered "Today's Spark" reveal shown when the top-bar
+   quote button is tapped.
+
+   Sequence: two rotating rings (current rank color, and every rank
+   color below it if any) scale/fade in behind the card and settle into
+   a slow, opposite-direction spin. The card fades in a beat later and
+   the quote reveals sentence-by-sentence. The instant the text finishes
+   revealing, the rings fade out while a matching gradient border fades
+   in on the card itself — as if the rings' energy merged into the card.
+   A scattered field of small twinkling stars sits behind everything,
+   colored from every rank the player has reached so far (E through
+   their current rank), so the palette visibly grows as they climb.
 
    The card has a fixed width but automatic height (no fixed box), so
    it grows for longer quotes instead of overflowing — with a max-height
    + scroll fallback as a safety net for unusually long entries. The
-   diamond rings size themselves relative to the card via % dimensions,
-   so they still frame it correctly whether it's one line or five.
+   rings and the merge-border are positioned with fixed-pixel insets
+   (not percentages), so they always match the card's actual rendered
+   size even though that size isn't known in advance.
 
    Mounted only while open (rather than kept in the DOM and faded), so
    every open re-triggers the full entrance sequence from the start.
 --------------------------------------------------------------- */
-function QuoteSheet({ open, onClose, today, rankColor, prevRankColor }) {
+function QuoteSheet({ open, onClose, today, rankColor, prevRankColor, starPalette }) {
+  const stars = useMemo(() => {
+    if (!open) return [];
+    const palette = starPalette && starPalette.length ? starPalette : [rankColor];
+    return Array.from({ length: 50 }, () => {
+      const r = Math.random();
+      const size = r < 0.55 ? 1 + Math.random() * 1 : r < 0.85 ? 2 + Math.random() * 1.3 : 3.3 + Math.random() * 1.7;
+      return {
+        size,
+        color: palette[Math.floor(Math.random() * palette.length)],
+        top: Math.random() * 100,
+        left: Math.random() * 100,
+        duration: 1.6 + Math.random() * 3,
+        delay: Math.random() * 4.5,
+      };
+    });
+  }, [open, today, rankColor, starPalette]);
+
   if (!open) return null;
+
   const quote = getDailyQuote(today);
   const sentences = splitSentences(quote.text);
   const ringGradient = `linear-gradient(135deg, ${rankColor}, ${blend(rankColor, "#ffffff", 55)})`;
+  const mergeGradient = `linear-gradient(135deg, ${prevRankColor || rankColor}, ${rankColor}, ${blend(rankColor, "#ffffff", 55)})`;
+
+  // Timing: the rings fade out and the border gradient fades in right as
+  // the last bit of text finishes its own fade-in.
+  const authorDelay = 0.7 + sentences.length * 0.15 + 0.1;
+  const mergeAt = authorDelay + 0.55;
 
   return (
     <>
@@ -4130,8 +4161,23 @@ function QuoteSheet({ open, onClose, today, rankColor, prevRankColor }) {
           position: "fixed", inset: 0, zIndex: 40,
           background: "rgba(0,0,0,0.6)",
           animation: "quote-backdrop-in 0.2s ease",
+          overflow: "hidden",
         }}
-      />
+      >
+        {stars.map((s, i) => (
+          <div
+            key={i}
+            style={{
+              position: "absolute", width: s.size, height: s.size, borderRadius: "50%",
+              background: s.color, top: `${s.top}%`, left: `${s.left}%`,
+              boxShadow: s.size > 3 ? `0 0 ${s.size * 1.5}px ${s.color}` : "none",
+              opacity: 0.12,
+              animation: `quote-star-twinkle ${s.duration}s ease-in-out ${s.delay}s infinite`,
+              pointerEvents: "none",
+            }}
+          />
+        ))}
+      </div>
       <div
         style={{
           position: "fixed", inset: 0, zIndex: 41,
@@ -4146,33 +4192,36 @@ function QuoteSheet({ open, onClose, today, rankColor, prevRankColor }) {
             pointerEvents: "auto",
           }}
         >
-          {/* previous-rank diamond — bigger, dimmer, spins the opposite way
-              so the two rings never sync up and look mechanical */}
+          {/* previous-rank ring — bigger, dimmer, spins the opposite way so
+              the two rings never sync up and look mechanical. Sized with
+              fixed-pixel insets (not %) so it tracks the card's real height
+              even though that height is automatic. */}
           {prevRankColor && (
             <div
               style={{
-                position: "absolute", width: "112%", height: "128%",
-                borderRadius: 32, border: "2px solid transparent",
+                position: "absolute", top: -40, bottom: -40, left: -18, right: -18,
+                borderRadius: 999, border: "2px solid transparent",
                 borderImage: `linear-gradient(135deg, ${prevRankColor}, ${prevRankColor}) 1`,
                 transform: "rotate(45deg) scale(0)", opacity: 0,
-                animation: "quote-ring-in-outer 0.6s cubic-bezier(0.2,0.9,0.3,1.2) 0.1s forwards, quote-ring-spin-rev 11s linear 0.7s infinite",
+                animation: `quote-ring-in-outer 0.6s cubic-bezier(0.2,0.9,0.3,1.2) 0.1s forwards, quote-ring-spin-rev 11s linear 0.7s infinite, quote-ring-out 0.5s ease-in ${mergeAt}s forwards`,
                 pointerEvents: "none",
               }}
             />
           )}
-          {/* current-rank diamond */}
+          {/* current-rank ring */}
           <div
             style={{
-              position: "absolute", width: "104%", height: "120%",
-              borderRadius: 32, border: "2px solid transparent",
+              position: "absolute", top: -26, bottom: -26, left: -11, right: -11,
+              borderRadius: 999, border: "2px solid transparent",
               borderImage: `${ringGradient} 1`,
               transform: "rotate(45deg) scale(0)", opacity: 0,
-              animation: "quote-ring-in 0.6s cubic-bezier(0.2,0.9,0.3,1.2) forwards, quote-ring-spin 8s linear 0.6s infinite",
+              animation: `quote-ring-in 0.6s cubic-bezier(0.2,0.9,0.3,1.2) forwards, quote-ring-spin 8s linear 0.6s infinite, quote-ring-out 0.5s ease-in ${mergeAt}s forwards`,
               pointerEvents: "none",
             }}
           />
-          {/* corner spark glints — small flashes at the diamond's points,
-              staggered so they read as intermittent static discharge */}
+          {/* corner spark glints — small flashes near the rings, staggered so
+              they read as intermittent static discharge. They fade out
+              alongside the rings at the same merge moment. */}
           {[
             { top: -2, left: "50%", marginLeft: -3, color: rankColor, delay: 1.1 },
             { top: "50%", right: -2, marginTop: -3, color: prevRankColor || rankColor, delay: 1.7 },
@@ -4185,7 +4234,8 @@ function QuoteSheet({ open, onClose, today, rankColor, prevRankColor }) {
                 position: "absolute", width: 6, height: 6, borderRadius: "50%",
                 background: g.color, boxShadow: `0 0 6px ${g.color}`,
                 top: g.top, bottom: g.bottom, left: g.left, right: g.right, marginTop: g.marginTop, marginLeft: g.marginLeft,
-                opacity: 0, animation: `quote-glint 2.4s ease-in-out ${g.delay}s infinite`,
+                opacity: 0,
+                animation: `quote-glint 2.4s ease-in-out ${g.delay}s infinite, quote-glint-out 0.4s ease-in ${mergeAt}s forwards`,
                 pointerEvents: "none",
               }}
             />
@@ -4202,10 +4252,18 @@ function QuoteSheet({ open, onClose, today, rankColor, prevRankColor }) {
               animation: "quote-card-in 0.5s ease-out 0.55s forwards",
             }}
           >
-            <div className="flex items-center gap-2" style={{ marginBottom: 12 }}>
-              <Sparkles size={14} color={rankColor} />
-              <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 10.5, letterSpacing: 0.5, color: C.faint }}>
-                SPARK OF THE DAY
+            <div className="flex items-center gap-2" style={{ marginBottom: 14 }}>
+              <div
+                style={{
+                  width: 20, height: 20, borderRadius: 7, flexShrink: 0,
+                  background: mix(rankColor, 16),
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+              >
+                <Sparkles size={12} color={rankColor} />
+              </div>
+              <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 12, letterSpacing: 0.2, color: C.onSurfaceVariant }}>
+                Today's Spark
               </span>
             </div>
             <p style={{ color: C.onSurface, fontFamily: sans, fontSize: 15.5, fontStyle: "italic", lineHeight: 1.6, margin: "0 0 12px" }}>
@@ -4225,12 +4283,25 @@ function QuoteSheet({ open, onClose, today, rankColor, prevRankColor }) {
               style={{
                 color: rankColor, fontFamily: sans, fontSize: 13, fontWeight: 600, margin: 0, textAlign: "right",
                 opacity: 0,
-                animation: `quote-line-in 0.4s ease-out ${0.7 + sentences.length * 0.15 + 0.1}s forwards`,
+                animation: `quote-line-in 0.4s ease-out ${authorDelay}s forwards`,
               }}
             >
               — {quote.author}
             </p>
           </div>
+
+          {/* merge border — fades in exactly as the rings fade out, tracing
+              the card's own rounded-rect shape (not a diamond) with fixed
+              pixel insets so it hugs the card at any height. */}
+          <div
+            style={{
+              position: "absolute", top: -1, bottom: -1, left: -1, right: -1,
+              borderRadius: 23, border: "1.5px solid transparent",
+              borderImage: `${mergeGradient} 1`,
+              opacity: 0, pointerEvents: "none",
+              animation: `quote-border-in 0.5s ease-out ${mergeAt}s forwards`,
+            }}
+          />
         </div>
       </div>
     </>
@@ -4725,8 +4796,12 @@ export default function LifeRPG() {
   // whole UI's accent shifts as the player's overall rank climbs.
   const { rank: appRank } = rankInfo(wScore + vScore + weScore + rScore);
   const rankTint = rankColor(appRank, mode);
-  const prevRankBandIdx = RANK_BANDS.findIndex((b) => b.rank === appRank) - 1;
+  const currentRankBandIdx = RANK_BANDS.findIndex((b) => b.rank === appRank);
+  const prevRankBandIdx = currentRankBandIdx - 1;
   const prevRankTint = prevRankBandIdx >= 0 ? rankColor(RANK_BANDS[prevRankBandIdx].rank, mode) : null;
+  // Quote-sheet star field draws from every rank reached so far (E through
+  // the current rank, inclusive) — the palette visibly grows as you climb.
+  const starPalette = RANK_BANDS.slice(0, currentRankBandIdx + 1).map((b) => rankColor(b.rank, mode));
 
   const tabs = [
     { id: "dashboard", label: "Home", icon: Home, color: C.accent },
@@ -4784,6 +4859,10 @@ export default function LifeRPG() {
             to { opacity: 1; transform: translateY(0); }
           }
           @keyframes quote-glint { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+          @keyframes quote-ring-out { to { opacity: 0; transform: rotate(45deg) scale(0.85); } }
+          @keyframes quote-glint-out { to { opacity: 0; } }
+          @keyframes quote-border-in { from { opacity: 0; } to { opacity: 1; } }
+          @keyframes quote-star-twinkle { 0%, 100% { opacity: 0.12; } 50% { opacity: 1; } }
           ::-webkit-scrollbar { width: 0; height: 0; }
         `}</style>
 
@@ -5304,7 +5383,7 @@ export default function LifeRPG() {
           </div>
         </div>
 
-        <QuoteSheet open={quoteOpen} onClose={() => setQuoteOpen(false)} today={today} rankColor={rankTint} prevRankColor={prevRankTint} />
+        <QuoteSheet open={quoteOpen} onClose={() => setQuoteOpen(false)} today={today} rankColor={rankTint} prevRankColor={prevRankTint} starPalette={starPalette} />
         <BottomNav tab={tab} setTab={setTab} tabs={tabs.filter((t) => t.id !== "achievements" && t.id !== "diet" && t.id !== "planner" && t.id !== "calendar")} />
       </div>
     </div>
