@@ -421,7 +421,10 @@ function defaultState() {
     // never contributes points or XP; it's just a food/protein log.
     diet: {
       plans: [], // [{ id, name, items: [{ id, name, protein }] }]
-      logs: {}, // { "YYYY-MM-DD": { planId, completed: { [itemId]: true } } }
+      // "extras" are one-off items logged for a single day only — they never
+      // touch plans/items, so adding/removing them can't change any diet
+      // you've built. { "YYYY-MM-DD": { planId, completed: { [itemId]: true }, extras: [{ id, name, protein }] } }
+      logs: {},
     },
     // Day planner — also separate from the Level 1 quest / scoring.
     planner: {
@@ -468,6 +471,9 @@ function migrateState(parsed) {
   if (!next.diet) next.diet = base.diet;
   if (!Array.isArray(next.diet.plans)) next.diet = { ...next.diet, plans: [] };
   if (!next.diet.logs || typeof next.diet.logs !== "object") next.diet = { ...next.diet, logs: {} };
+  Object.keys(next.diet.logs).forEach((ds) => {
+    if (!Array.isArray(next.diet.logs[ds].extras)) next.diet.logs[ds] = { ...next.diet.logs[ds], extras: [] };
+  });
   if (!next.planner) next.planner = base.planner;
   if (!next.planner.days || typeof next.planner.days !== "object") next.planner = { ...next.planner, days: {} };
   if (!Array.isArray(next.planner.unlisted)) next.planner = { ...next.planner, unlisted: [] };
@@ -1897,9 +1903,10 @@ function DietTab({ s, set }) {
   const totalProtein = activePlan
     ? activePlan.items.reduce((sum, i) => sum + (Number(i.protein) || 0), 0)
     : 0;
-  const consumedProtein = activePlan
+  const extraProtein = (log.extras || []).reduce((sum, i) => sum + (Number(i.protein) || 0), 0);
+  const consumedProtein = (activePlan
     ? activePlan.items.filter((i) => log.completed?.[i.id]).reduce((sum, i) => sum + (Number(i.protein) || 0), 0)
-    : 0;
+    : 0) + extraProtein;
 
   return (
     <div className="pb-4">
@@ -1964,7 +1971,7 @@ function DietTodayCard({ s, set, today, log, plans, activePlan, totalProtein, co
 
   const chooseDiet = (planId) => {
     set((d) => {
-      if (!d.diet.logs[today]) d.diet.logs[today] = { planId: null, completed: {} };
+      if (!d.diet.logs[today]) d.diet.logs[today] = { planId: null, completed: {}, extras: [] };
       d.diet.logs[today].planId = planId;
       d.diet.logs[today].completed = {};
     });
@@ -1975,7 +1982,7 @@ function DietTodayCard({ s, set, today, log, plans, activePlan, totalProtein, co
     <Mission
       title="Today"
       points={activePlan ? Math.round(totalProtein) : 0}
-      earned={activePlan ? consumedProtein : undefined}
+      earned={activePlan || consumedProtein > 0 ? consumedProtein : undefined}
       color={C.accent}
       defaultOpen
     >
@@ -2030,7 +2037,7 @@ function DietTodayCard({ s, set, today, log, plans, activePlan, totalProtein, co
                       checked={checked}
                       color={C.accent}
                       onClick={() => set((d) => {
-                        if (!d.diet.logs[today]) d.diet.logs[today] = { planId: activePlan.id, completed: {} };
+                        if (!d.diet.logs[today]) d.diet.logs[today] = { planId: activePlan.id, completed: {}, extras: [] };
                         d.diet.logs[today].completed[item.id] = !d.diet.logs[today].completed[item.id];
                       })}
                     />
@@ -2050,7 +2057,121 @@ function DietTodayCard({ s, set, today, log, plans, activePlan, totalProtein, co
           )}
         </div>
       )}
+
+      <DietExtras date={today} log={log} set={set} />
     </Mission>
+  );
+}
+
+/* Per-day "extra" log — one-off items you had on top of whatever diet plan
+   you followed (or even with no plan chosen). Lives entirely inside that
+   day's diet.logs[date].extras, so adding/removing extras never edits any
+   diet plan you've created; it only ever affects that single day. */
+function DietExtras({ date, log, set }) {
+  const readOnly = useContext(ReadOnlyContext);
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [protein, setProtein] = useState("");
+  const extras = log?.extras || [];
+  const extraGrams = extras.reduce((sum, i) => sum + (Number(i.protein) || 0), 0);
+
+  const addExtra = () => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const p = Number(protein);
+    set((d) => {
+      if (!d.diet.logs[date]) d.diet.logs[date] = { planId: null, completed: {}, extras: [] };
+      if (!Array.isArray(d.diet.logs[date].extras)) d.diet.logs[date].extras = [];
+      d.diet.logs[date].extras.push({ id: uid(), name: trimmed, protein: Number.isFinite(p) && p > 0 ? p : 0 });
+    });
+    setName("");
+    setProtein("");
+    setAdding(false);
+  };
+
+  const removeExtra = (itemId) => {
+    set((d) => {
+      if (d.diet.logs[date]?.extras) {
+        d.diet.logs[date].extras = d.diet.logs[date].extras.filter((i) => i.id !== itemId);
+      }
+    });
+  };
+
+  return (
+    <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.outlineVariant}` }}>
+      <div className="flex items-center justify-between" style={{ marginBottom: extras.length > 0 || adding ? 8 : 0 }}>
+        <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 11.5, color: C.faint, letterSpacing: 0.4 }}>
+          EXTRA{extraGrams > 0 ? ` · +${Math.round(extraGrams)}g` : ""}
+        </span>
+        {!readOnly && !adding && (
+          <Touchable writeAction onClick={() => setAdding(true)} style={{ padding: 3 }}>
+            <Plus size={14} color={C.accent} />
+          </Touchable>
+        )}
+      </div>
+
+      {extras.length > 0 && (
+        <div className="flex flex-col gap-2" style={{ marginBottom: adding ? 8 : 0 }}>
+          {extras.map((item) => (
+            <div
+              key={item.id}
+              style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 10, padding: "8px 12px" }}
+              className="flex items-center gap-2"
+            >
+              <span style={{ flex: 1, color: C.onSurface, fontFamily: sans, fontSize: 13 }}>{item.name}</span>
+              {item.protein > 0 && <span style={{ color: C.faint, fontFamily: mono, fontSize: 11.5 }}>{item.protein}g</span>}
+              {!readOnly && (
+                <Touchable writeAction onClick={() => removeExtra(item.id)} style={{ padding: 4 }}>
+                  <Trash2 size={13} color={C.faint} />
+                </Touchable>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!readOnly && adding && (
+        <div className="flex flex-col gap-2">
+          <input
+            type="text"
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="What did you have extra? (e.g. Ice cream)"
+            style={{
+              background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, color: C.onSurface,
+              fontFamily: sans, fontSize: 13, borderRadius: 10, padding: "9px 12px", outline: "none",
+            }}
+          />
+          <input
+            type="number"
+            value={protein}
+            onChange={(e) => setProtein(e.target.value)}
+            placeholder="Protein (g) — optional"
+            style={{
+              background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, color: C.onSurface,
+              fontFamily: mono, fontSize: 13, borderRadius: 10, padding: "9px 12px", outline: "none",
+            }}
+          />
+          <div className="flex items-center gap-2">
+            <Touchable
+              onClick={() => { setAdding(false); setName(""); setProtein(""); }}
+              style={{ flex: 1, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center" }}
+            >
+              <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Cancel</span>
+            </Touchable>
+            <Touchable
+              writeAction
+              onClick={addExtra}
+              style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+            >
+              <Plus size={14} color="#fff" />
+              <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add</span>
+            </Touchable>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -2849,6 +2970,8 @@ function calDayStatus(state, ds) {
     dietGrams = doneItems.reduce((sum, i) => sum + (Number(i.protein) || 0), 0);
     dietFrac = dplan.items.length > 0 ? doneItems.length / dplan.items.length : 0;
   }
+  const extraGrams = (dlog?.extras || []).reduce((sum, i) => sum + (Number(i.protein) || 0), 0);
+  dietGrams += extraGrams;
 
   const isMtDay = MT_DATES.includes(ds);
   const vitalityFrac = isMtDay ? (state.vitality.muayThai[ds] ? 1 : 0) : null;
@@ -3142,9 +3265,10 @@ function CalendarDayDetail({ date, state, set }) {
   const dietTotalProtein = activePlan
     ? activePlan.items.reduce((sum, i) => sum + (Number(i.protein) || 0), 0)
     : 0;
-  const dietConsumedProtein = activePlan
+  const dietExtraProtein = (dlog.extras || []).reduce((sum, i) => sum + (Number(i.protein) || 0), 0);
+  const dietConsumedProtein = (activePlan
     ? activePlan.items.filter((i) => dlog.completed?.[i.id]).reduce((sum, i) => sum + (Number(i.protein) || 0), 0)
-    : 0;
+    : 0) + dietExtraProtein;
 
   const isMtDay = MT_DATES.includes(date);
   const mtDone = !!state.vitality.muayThai[date];
@@ -3175,7 +3299,7 @@ function CalendarDayDetail({ date, state, set }) {
                 writeAction
                 onClick={() => {
                   set((dr) => {
-                    if (!dr.diet.logs[date]) dr.diet.logs[date] = { planId: null, completed: {} };
+                    if (!dr.diet.logs[date]) dr.diet.logs[date] = { planId: null, completed: {}, extras: [] };
                     dr.diet.logs[date].planId = p.id;
                     dr.diet.logs[date].completed = {};
                   });
@@ -3222,7 +3346,7 @@ function CalendarDayDetail({ date, state, set }) {
                         checked={checked}
                         color={C.accent}
                         onClick={() => set((dr) => {
-                          if (!dr.diet.logs[date]) dr.diet.logs[date] = { planId: activePlan.id, completed: {} };
+                          if (!dr.diet.logs[date]) dr.diet.logs[date] = { planId: activePlan.id, completed: {}, extras: [] };
                           dr.diet.logs[date].completed[item.id] = !dr.diet.logs[date].completed[item.id];
                         })}
                       />
@@ -3242,6 +3366,8 @@ function CalendarDayDetail({ date, state, set }) {
             )}
           </div>
         )}
+
+        <DietExtras date={date} log={dlog} set={set} />
       </Mission>
 
       {isMtDay && (
