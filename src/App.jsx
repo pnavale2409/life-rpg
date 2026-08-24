@@ -1027,10 +1027,10 @@ function RestrictedTab({ label, Icon }) {
   );
 }
 
-function Mission({ title, points, earned, children, color, defaultOpen = false, rightLabel, locked = false }) {
+function Mission({ title, points, earned, children, color, defaultOpen = false, rightLabel, locked = false, nested = false }) {
   const [open, setOpen] = useState(locked ? false : defaultOpen);
   return (
-    <div style={{ position: "relative", background: C.container, borderRadius: 10 }} className="mx-4 mb-3 overflow-hidden">
+    <div style={{ position: "relative", background: C.container, borderRadius: 10 }} className={nested ? "mb-3 overflow-hidden" : "mx-4 mb-3 overflow-hidden"}>
       <div
         style={{
           position: "absolute", left: 0, top: "22%", bottom: "22%", width: 3, borderRadius: 3,
@@ -1045,7 +1045,7 @@ function Mission({ title, points, earned, children, color, defaultOpen = false, 
             <span style={{ fontFamily: mono, color, fontSize: 11.5 }}>
               {rightLabel !== undefined
                 ? rightLabel
-                : (earned !== undefined ? `${Math.round(earned * 10) / 10} / ${points} pts` : `${points} pts`)}
+                : (points === undefined ? "" : (earned !== undefined ? `${Math.round(earned * 10) / 10} / ${points} pts` : `${points} pts`))}
             </span>
             {!locked && (open ? <ChevronUp size={16} color={C.onSurfaceVariant} /> : <ChevronDown size={16} color={C.onSurfaceVariant} />)}
           </div>
@@ -1584,6 +1584,22 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
             <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 12.5 }}>Actually, log it now instead</span>
           </Touchable>
         </div>
+      ) : skipping ? (
+        <div className="flex flex-col gap-2">
+          <p style={{ color: C.faint, fontSize: 11.5, margin: 0 }}>
+            {log ? "Why are you skipping? Progress so far won't be saved — it'll move to catch-up." : "Why are you skipping? It'll move to catch-up."}
+          </p>
+          <div className="flex items-center gap-2">
+            {SKIP_REASONS.map((r) => (
+              <Touchable writeAction key={r} onClick={() => confirmSkip(r)} style={{ flex: 1, borderRadius: 10, padding: "8px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 12.5 }}>{r}</span>
+              </Touchable>
+            ))}
+          </div>
+          <Touchable onClick={() => setSkipping(false)} style={{ alignSelf: "center", padding: "4px 0" }}>
+            <span style={{ color: C.faint, fontFamily: sans, fontSize: 11.5 }}>Cancel</span>
+          </Touchable>
+        </div>
       ) : !log ? (
         <div className="flex flex-col gap-3">
           <div>
@@ -1603,7 +1619,7 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
               </div>
             )}
           </div>
-          {plannedDay.exercises.length > 0 && !skipping && (
+          {plannedDay.exercises.length > 0 && (
             <div className="flex items-center gap-2">
               <Touchable writeAction onClick={startDay} style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                 <Dumbbell size={14} color="#fff" />
@@ -1614,21 +1630,6 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
                   <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 12.5 }}>Skip</span>
                 </Touchable>
               )}
-            </div>
-          )}
-          {plannedDay.exercises.length > 0 && skipping && (
-            <div className="flex flex-col gap-2">
-              <p style={{ color: C.faint, fontSize: 11.5, margin: 0 }}>Why are you skipping? It'll move to catch-up.</p>
-              <div className="flex items-center gap-2">
-                {SKIP_REASONS.map((r) => (
-                  <Touchable writeAction key={r} onClick={() => confirmSkip(r)} style={{ flex: 1, borderRadius: 10, padding: "8px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 12.5 }}>{r}</span>
-                  </Touchable>
-                ))}
-              </div>
-              <Touchable onClick={() => setSkipping(false)} style={{ alignSelf: "center", padding: "4px 0" }}>
-                <span style={{ color: C.faint, fontFamily: sans, fontSize: 11.5 }}>Cancel</span>
-              </Touchable>
             </div>
           )}
         </div>
@@ -1648,6 +1649,11 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
                 />
               ))}
             </div>
+          )}
+          {isToday && plannedDay?.exercises.length > 0 && (
+            <Touchable writeAction onClick={() => setSkipping(true)} style={{ marginTop: 10, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 12.5 }}>Skip this workout instead</span>
+            </Touchable>
           )}
         </div>
       )}
@@ -1898,7 +1904,7 @@ function ScheduleCard({ schedule, gym, update }) {
   );
 
   return (
-    <Mission title={title} color={C.accent}>
+    <Mission title={title} color={C.accent} nested>
       {!schedule.active && (
         <Touchable writeAction onClick={setActive} style={{ marginBottom: 12, borderRadius: 10, padding: "8px 0", border: `1px solid ${mix(C.accent, 40)}`, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
           <Star size={13} color={C.accent} />
