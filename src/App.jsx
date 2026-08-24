@@ -1027,31 +1027,46 @@ function RestrictedTab({ label, Icon }) {
   );
 }
 
-function Mission({ title, points, earned, children, color, defaultOpen = false, rightLabel, locked = false, nested = false }) {
+function Mission({ title, points, earned, children, color, defaultOpen = false, rightLabel, locked = false, nested = false, emphasized = false }) {
   const [open, setOpen] = useState(locked ? false : defaultOpen);
+  const radius = emphasized ? 8 : 10;
   return (
-    <div style={{ position: "relative", background: C.container, borderRadius: 10 }} className={nested ? "mb-3 overflow-hidden" : "mx-4 mb-3 overflow-hidden"}>
-      <div
-        style={{
-          position: "absolute", left: 0, top: "22%", bottom: "22%", width: 3, borderRadius: 3,
-          background: `linear-gradient(180deg, transparent, ${color}, transparent)`,
-          boxShadow: `0 0 8px ${mix(color, 60)}`,
-        }}
-      />
-      <Touchable onClick={() => { if (!locked) setOpen((o) => !o); }} disabled={locked} style={{ display: "block" }}>
-        <div className="w-full flex items-center justify-between p-4">
-          <div style={{ fontFamily: sans, fontWeight: 500, color: C.onSurface, fontSize: 14.5, minWidth: 0, flex: 1 }}>{title}</div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <span style={{ fontFamily: mono, color, fontSize: 11.5 }}>
-              {rightLabel !== undefined
-                ? rightLabel
-                : (points === undefined ? "" : (earned !== undefined ? `${Math.round(earned * 10) / 10} / ${points} pts` : `${points} pts`))}
-            </span>
-            {!locked && (open ? <ChevronUp size={16} color={C.onSurfaceVariant} /> : <ChevronDown size={16} color={C.onSurfaceVariant} />)}
+    <div
+      style={{
+        position: "relative", borderRadius: radius + 1.5,
+        padding: emphasized ? 1.5 : 0,
+        background: emphasized
+          ? `linear-gradient(135deg, ${mix(color, 90)}, ${mix(color, 25)} 45%, ${mix(color, 90)} 100%)`
+          : "transparent",
+        boxShadow: emphasized ? `0 0 16px ${mix(color, 35)}` : "none",
+      }}
+      className={nested ? "mb-3" : "mx-4 mb-3"}
+    >
+      <div style={{ position: "relative", background: C.container, borderRadius: radius }} className="overflow-hidden">
+        {!emphasized && (
+          <div
+            style={{
+              position: "absolute", left: 0, top: "22%", bottom: "22%", width: 3, borderRadius: 3,
+              background: `linear-gradient(180deg, transparent, ${color}, transparent)`,
+              boxShadow: `0 0 8px ${mix(color, 60)}`,
+            }}
+          />
+        )}
+        <Touchable onClick={() => { if (!locked) setOpen((o) => !o); }} disabled={locked} style={{ display: "block" }}>
+          <div className="w-full flex items-center justify-between" style={{ padding: emphasized ? "17px 18px" : 16 }}>
+            <div style={{ fontFamily: sans, fontWeight: emphasized ? 700 : 500, color: C.onSurface, fontSize: emphasized ? 15.5 : 14.5, minWidth: 0, flex: 1 }}>{title}</div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span style={{ fontFamily: mono, color, fontSize: 11.5 }}>
+                {rightLabel !== undefined
+                  ? rightLabel
+                  : (points === undefined ? "" : (earned !== undefined ? `${Math.round(earned * 10) / 10} / ${points} pts` : `${points} pts`))}
+              </span>
+              {!locked && (open ? <ChevronUp size={16} color={C.onSurfaceVariant} /> : <ChevronDown size={16} color={C.onSurfaceVariant} />)}
+            </div>
           </div>
-        </div>
-      </Touchable>
-      {!locked && open && <div className="px-4 pb-4">{children}</div>}
+        </Touchable>
+        {!locked && open && <div className="px-4 pb-4">{children}</div>}
+      </div>
     </div>
   );
 }
@@ -1372,7 +1387,7 @@ const gymInputStyle = {
 };
 const gymSelectStyle = { ...gymInputStyle, fontFamily: mono };
 
-const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+const DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]; // workout week starts Sunday
 const DAY_LABELS = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun" };
 const MUSCLES = ["Chest", "Back", "Legs", "Shoulders", "Arms", "Core", "General", "Cardio", "Rest"];
 // Muscle groups an exercise can actually belong to (excludes "Rest", which
@@ -1387,7 +1402,7 @@ const SKIP_REASONS = ["Work", "Health", "Other"];
 
 function gymTodayKey() {
   const d = new Date();
-  return DAY_KEYS[(d.getDay() + 6) % 7]; // JS getDay(): 0=Sun..6=Sat -> Mon-first index
+  return DAY_KEYS[d.getDay()]; // JS getDay(): 0=Sun..6=Sat, matches Sunday-first DAY_KEYS
 }
 function shiftDate(dateStr, delta) {
   const d = new Date(dateStr + "T00:00:00");
@@ -1396,7 +1411,7 @@ function shiftDate(dateStr, delta) {
 }
 function dayKeyFromDate(dateStr) {
   const d = new Date(dateStr + "T00:00:00");
-  return DAY_KEYS[(d.getDay() + 6) % 7];
+  return DAY_KEYS[d.getDay()];
 }
 function formatDisplayDate(dateStr, today) {
   if (dateStr === today) return "Today";
@@ -1454,7 +1469,7 @@ function WorkoutCard({ s, set, locked }) {
   const TABS = [["today", "Today"], ["schedules", "Workouts"], ["exercises", "Exercises"]];
 
   return (
-    <Mission title="Workout" rightLabel={rightLabel} color={C.accent}>
+    <Mission title="Workout" rightLabel={rightLabel} color={C.accent} emphasized>
       <div className="flex items-center gap-2 mb-3">
         {TABS.map(([key, label]) => (
           <Touchable
@@ -1563,7 +1578,12 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
           <Touchable onClick={() => goDay(-1)} style={{ width: 24, height: 24, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", border: `1px solid ${C.outlineVariant}` }}>
             <ChevronDown size={12} color={C.onSurfaceVariant} style={{ transform: "rotate(90deg)" }} />
           </Touchable>
-          <span style={{ fontFamily: sans, fontWeight: 600, color: C.onSurface, fontSize: 14, minWidth: 78, textAlign: "center" }}>{formatDisplayDate(viewDate, today)}</span>
+          <DatePicker
+            selected={viewDate}
+            onSelect={(ds) => { setViewDate(ds); setSkipping(false); }}
+            hasMarker={(ds) => !!gym.logs[ds]}
+            maxDate={new Date(today + "T00:00:00")}
+          />
           <Touchable onClick={() => goDay(1)} disabled={isToday} style={{ width: 24, height: 24, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", border: `1px solid ${C.outlineVariant}`, opacity: isToday ? 0.35 : 1 }}>
             <ChevronDown size={12} color={C.onSurfaceVariant} style={{ transform: "rotate(-90deg)" }} />
           </Touchable>
@@ -3678,7 +3698,15 @@ function CreateDietCard({ set, onCreate }) {
    stepping one day at a time via the arrows. Days with tasks get a
    small dot so you can spot them at a glance; a "Jump to Today"
    shortcut sits at the bottom for snapping back after jumping far. */
-function PlannerDatePicker({ selected, onSelect, hasTasks }) {
+/* Generic "jump to any date" calendar dropdown — a compact button that
+   shows the selected date and expands into a month grid on tap. Used by
+   the Planner (any date, no bounds) and the workout Today section (bounded
+   to maxDate so you can't log into the future). `hasMarker(ds)` controls
+   the small dot shown under a day (e.g. "has tasks" / "has a logged
+   workout"); `maxDate`/`minDate` (Date objects, optional) disable and dim
+   any day outside the range instead of hiding it, so the month shape stays
+   consistent. */
+function DatePicker({ selected, onSelect, hasMarker, maxDate, minDate }) {
   const [open, setOpen] = useState(false);
   const selDate = new Date(selected + "T00:00:00");
   const [viewYear, setViewYear] = useState(selDate.getFullYear());
@@ -3716,6 +3744,8 @@ function PlannerDatePicker({ selected, onSelect, hasTasks }) {
   for (let day = 1; day <= daysInMonth; day++) cells.push(new Date(viewYear, viewMonth, day));
   const monthLabel = firstOfMonth.toLocaleDateString("en-US", { month: "long", year: "numeric" });
   const todayStr = fmtDate(new Date());
+  const todayDate = new Date(todayStr + "T00:00:00");
+  const jumpTarget = maxDate && todayDate > maxDate ? fmtDate(maxDate) : todayStr;
 
   return (
     <div ref={wrapRef} style={{ position: "relative" }}>
@@ -3772,16 +3802,19 @@ function PlannerDatePicker({ selected, onSelect, hasTasks }) {
               const ds = fmtDate(d);
               const isSel = ds === selected;
               const isTodayCell = ds === todayStr;
-              const dotted = !!hasTasks?.(ds);
+              const disabled = (maxDate && d > maxDate) || (minDate && d < minDate);
+              const dotted = !disabled && !!hasMarker?.(ds);
               return (
                 <Touchable
                   key={i}
-                  onClick={() => { onSelect(ds); setOpen(false); }}
+                  onClick={() => { if (disabled) return; onSelect(ds); setOpen(false); }}
+                  disabled={disabled}
                   style={{
                     aspectRatio: "1", borderRadius: 10,
                     background: isSel ? C.accent : "transparent",
                     border: isTodayCell && !isSel ? `1px solid ${C.accent}` : "1px solid transparent",
                     display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
+                    opacity: disabled ? 0.3 : 1,
                   }}
                 >
                   <span style={{ fontFamily: mono, fontSize: 11, color: isSel ? C.surface : C.onSurface, fontWeight: isTodayCell ? 800 : 500 }}>
@@ -3793,7 +3826,7 @@ function PlannerDatePicker({ selected, onSelect, hasTasks }) {
             })}
           </div>
           <Touchable
-            onClick={() => { onSelect(todayStr); setOpen(false); }}
+            onClick={() => { onSelect(jumpTarget); setOpen(false); }}
             style={{
               marginTop: 10, width: "100%", padding: "8px 0", borderRadius: 10,
               border: `1px solid ${C.outlineVariant}`,
@@ -3836,10 +3869,10 @@ function PlannerTab({ s, set }) {
         >
           <ChevronLeft size={18} color={C.onSurfaceVariant} />
         </Touchable>
-        <PlannerDatePicker
+        <DatePicker
           selected={selected}
           onSelect={setSelected}
-          hasTasks={(ds) => (s.days?.[ds] || []).some((t) => !t.completed)}
+          hasMarker={(ds) => (s.days?.[ds] || []).some((t) => !t.completed)}
         />
         <Touchable
           onClick={() => shiftDay(1)}
