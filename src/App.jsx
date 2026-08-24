@@ -1418,7 +1418,7 @@ function defaultGymState() {
    OUTER CARD — one Mission ("Workout") with an internal tab switcher.
 ================================================================= */
 function WorkoutCard({ s, set, locked }) {
-  const gym = s.vitality.gym;
+  const gym = s.gym;
   const update = (mutator) => set((d) => { mutator(d.vitality.gym); });
   const [tab, setTab] = useState("today");
 
@@ -2267,6 +2267,42 @@ function ExerciseDatabaseCard({ gym, update }) {
 }
 
 
+/* Three at-a-glance tiles sitting above the Vitality mission cards —
+   Today (half width), Treks (quarter), Progress (quarter, placeholder
+   for now — not clickable, no metric decided yet). */
+function VitalityOverviewTiles({ s, eff }) {
+  const gym = s.gym;
+  const activeSchedule = gym.schedules.find((sc) => sc.active) || null;
+  const today = fmtDate(new Date());
+  const tKey = gymTodayKey();
+  const todayLog = gym.logs[today] || null;
+  const todayPlanned = activeSchedule ? activeSchedule.days[tKey] : null;
+  const todayMuscle = todayLog ? todayLog.muscles.join(", ") : todayPlanned ? todayPlanned.muscles.join(", ") : "—";
+
+  const tileStyle = { background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 12, padding: "10px 12px", minWidth: 0 };
+  const labelStyle = { fontFamily: sans, fontWeight: 700, fontSize: 10, color: C.faint, letterSpacing: 0.5 };
+  const valueStyle = { fontFamily: sans, fontWeight: 700, fontSize: 15, color: C.onSurface, marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
+  const subStyle = { fontFamily: mono, fontSize: 10.5, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
+
+  return (
+    <div className="px-4 mb-3" style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 8 }}>
+      <div style={tileStyle}>
+        <div style={labelStyle}>TODAY</div>
+        <div style={valueStyle}>{todayMuscle}</div>
+        <div style={{ ...subStyle, color: activeSchedule ? C.vitality : C.faint }}>{activeSchedule ? activeSchedule.name : "No active workout"}</div>
+      </div>
+      <div style={tileStyle}>
+        <div style={labelStyle}>TREKS</div>
+        <div style={valueStyle}>{eff.treks}/9</div>
+      </div>
+      <div style={{ ...tileStyle, opacity: 0.55 }}>
+        <div style={labelStyle}>PROGRESS</div>
+        <div style={valueStyle}>—</div>
+      </div>
+    </div>
+  );
+}
+
 function VitalityTab({ s, effective, set, locked }) {
   const eff = effective || s;
   const score = vitalityScore(eff);
@@ -2276,6 +2312,7 @@ function VitalityTab({ s, effective, set, locked }) {
   return (
     <div className="pb-4">
       <ScreenHeader title="Vitality" sub="Physical strength, endurance and health." color={C.vitality} score={score} />
+      <VitalityOverviewTiles s={s} eff={eff} />
       <LockWrap locked={locked} color={C.vitality}>
         <WorkoutCard s={s} set={set} locked={locked} />
         <Mission title="Muay Thai" points={65} earned={Object.values(eff.muayThai).filter(Boolean).length} color={C.vitality}>
