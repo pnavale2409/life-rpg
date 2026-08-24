@@ -1246,9 +1246,10 @@ function Stepper({ value, onChange, color, min = 0, max = 99 }) {
   );
 }
 
-/* One editable set row: done-check, weight, reps, remove. Shared by
+/* One editable set row: done-check, weight, reps, remove (or, for a
+   time-tracked exercise, done-check, minutes, remove). Shared by
    today's workout and by catch-up logging. */
-function SetRow({ index, set, onChange, onRemove, canRemove, color }) {
+function SetRow({ index, set, onChange, onRemove, canRemove, color, isTimed }) {
   const numInputStyle = {
     background: C.container, border: `1px solid ${C.outlineVariant}`, color: C.onSurface,
     fontFamily: mono, fontSize: 12.5, borderRadius: 8, padding: "6px 4px", outline: "none",
@@ -1272,23 +1273,36 @@ function SetRow({ index, set, onChange, onRemove, canRemove, color }) {
           {set.completed && <Check size={9} color={C.surface} strokeWidth={3.5} />}
         </div>
       </Touchable>
-      <div className="flex items-center gap-1" style={{ flex: 1 }}>
-        <input
-          type="number" inputMode="decimal" value={set.weight}
-          onChange={(e) => onChange("weight", e.target.value === "" ? 0 : Number(e.target.value))}
-          style={numInputStyle}
-        />
-        <span style={{ color: C.faint, fontFamily: mono, fontSize: 9.5, flexShrink: 0 }}>kg</span>
-      </div>
-      <span style={{ color: C.faint, fontFamily: mono, fontSize: 11, flexShrink: 0 }}>×</span>
-      <div className="flex items-center gap-1" style={{ flex: 1 }}>
-        <input
-          type="number" inputMode="numeric" value={set.reps}
-          onChange={(e) => onChange("reps", e.target.value === "" ? 0 : Number(e.target.value))}
-          style={numInputStyle}
-        />
-        <span style={{ color: C.faint, fontFamily: mono, fontSize: 9.5, flexShrink: 0 }}>reps</span>
-      </div>
+      {isTimed ? (
+        <div className="flex items-center gap-1" style={{ flex: 1 }}>
+          <input
+            type="number" inputMode="numeric" value={set.reps}
+            onChange={(e) => onChange("reps", e.target.value === "" ? 0 : Number(e.target.value))}
+            style={numInputStyle}
+          />
+          <span style={{ color: C.faint, fontFamily: mono, fontSize: 9.5, flexShrink: 0 }}>min</span>
+        </div>
+      ) : (
+        <>
+          <div className="flex items-center gap-1" style={{ flex: 1 }}>
+            <input
+              type="number" inputMode="decimal" value={set.weight}
+              onChange={(e) => onChange("weight", e.target.value === "" ? 0 : Number(e.target.value))}
+              style={numInputStyle}
+            />
+            <span style={{ color: C.faint, fontFamily: mono, fontSize: 9.5, flexShrink: 0 }}>kg</span>
+          </div>
+          <span style={{ color: C.faint, fontFamily: mono, fontSize: 11, flexShrink: 0 }}>×</span>
+          <div className="flex items-center gap-1" style={{ flex: 1 }}>
+            <input
+              type="number" inputMode="numeric" value={set.reps}
+              onChange={(e) => onChange("reps", e.target.value === "" ? 0 : Number(e.target.value))}
+              style={numInputStyle}
+            />
+            <span style={{ color: C.faint, fontFamily: mono, fontSize: 9.5, flexShrink: 0 }}>reps</span>
+          </div>
+        </>
+      )}
       {canRemove && (
         <Touchable writeAction onClick={onRemove} style={{ padding: 3, flexShrink: 0 }}>
           <X size={12} color={C.faint} />
@@ -1300,13 +1314,15 @@ function SetRow({ index, set, onChange, onRemove, canRemove, color }) {
 
 /* One exercise's worth of set rows, collapsed into a dropdown by default.
    `ex` is a { exerciseId, targetSets, targetReps, sets } entry. */
-function ExerciseSetLogger({ ex, name, color, onSetChange, onAddSet, onRemoveSet, defaultOpen = false }) {
+function ExerciseSetLogger({ ex, name, color, onSetChange, onAddSet, onRemoveSet, defaultOpen = false, isTimed = false }) {
   const [open, setOpen] = useState(defaultOpen);
   const doneCount = ex.sets.filter((s) => s.completed).length;
   const allDone = ex.sets.length > 0 && doneCount === ex.sets.length;
   const someDone = doneCount > 0 && !allDone;
   const topWeight = Math.max(0, ...ex.sets.filter((s) => s.completed).map((s) => s.weight || 0));
+  const totalMinutes = ex.sets.filter((s) => s.completed).reduce((sum, s) => sum + (s.reps || 0), 0);
   const dotColor = allDone ? color : someDone ? mix(color, 70) : C.faint;
+  const targetLabel = isTimed ? `target ${ex.targetSets}×${ex.targetReps}min` : `target ${ex.targetSets}×${ex.targetReps}`;
 
   return (
     <div style={{ background: C.containerHigh, border: `1px solid ${open ? mix(color, 30) : C.outlineVariant}`, borderRadius: 12, overflow: "hidden" }}>
@@ -1319,23 +1335,25 @@ function ExerciseSetLogger({ ex, name, color, onSetChange, onAddSet, onRemoveSet
           <span style={{ fontFamily: mono, fontSize: 10.5, color: allDone ? color : C.onSurfaceVariant, background: allDone ? mix(color, 16) : C.containerHighest, borderRadius: 6, padding: "2px 6px", flexShrink: 0 }}>
             {doneCount}/{ex.sets.length} sets
           </span>
-          {topWeight > 0 && <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint, flexShrink: 0 }}>{topWeight}kg</span>}
+          {isTimed
+            ? totalMinutes > 0 && <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint, flexShrink: 0 }}>{totalMinutes}min</span>
+            : topWeight > 0 && <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint, flexShrink: 0 }}>{topWeight}kg</span>}
           {open ? <ChevronUp size={14} color={C.onSurfaceVariant} style={{ flexShrink: 0 }} /> : <ChevronDown size={14} color={C.onSurfaceVariant} style={{ flexShrink: 0 }} />}
         </div>
       </Touchable>
       {!open && (
         <div style={{ padding: "0 12px 10px 22px" }}>
-          <span style={{ color: C.faint, fontFamily: mono, fontSize: 10.5 }}>target {ex.targetSets}×{ex.targetReps}</span>
+          <span style={{ color: C.faint, fontFamily: mono, fontSize: 10.5 }}>{targetLabel}</span>
         </div>
       )}
       {open && (
         <div className="flex flex-col gap-1.5" style={{ padding: "0 12px 12px 12px", borderTop: `1px solid ${C.outlineVariant}`, marginTop: 2, paddingTop: 10 }}>
           <div style={{ paddingLeft: 14, marginBottom: 2 }}>
-            <span style={{ color: C.faint, fontFamily: mono, fontSize: 10.5 }}>target {ex.targetSets}×{ex.targetReps}</span>
+            <span style={{ color: C.faint, fontFamily: mono, fontSize: 10.5 }}>{targetLabel}</span>
           </div>
           <div className="flex flex-col gap-1.5" style={{ paddingLeft: 14 }}>
             {ex.sets.map((s, i) => (
-              <SetRow key={i} index={i} set={s} color={color} canRemove={ex.sets.length > 1} onChange={(field, value) => onSetChange(i, field, value)} onRemove={() => onRemoveSet(i)} />
+              <SetRow key={i} index={i} set={s} color={color} canRemove={ex.sets.length > 1} isTimed={isTimed} onChange={(field, value) => onSetChange(i, field, value)} onRemove={() => onRemoveSet(i)} />
             ))}
             <Touchable writeAction onClick={onAddSet} style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 0" }}>
               <Plus size={12} color={color} />
@@ -1356,14 +1374,14 @@ const gymSelectStyle = { ...gymInputStyle, fontFamily: mono };
 
 const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const DAY_LABELS = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun" };
-const MUSCLES = ["Chest", "Back", "Legs", "Shoulders", "Arms", "Core", "General", "Full Body", "Cardio", "Rest"];
+const MUSCLES = ["Chest", "Back", "Legs", "Shoulders", "Arms", "Core", "General", "Cardio", "Rest"];
 // Muscle groups an exercise can actually belong to (excludes "Rest", which
 // is only ever a day-schedule tag, never something you'd file an exercise
 // under). "General" holds cross-body staples like Push Up / Pull Up.
 const EXERCISE_CATEGORIES = MUSCLES.filter((m) => m !== "Rest");
 const MUSCLE_ABBR = {
   Chest: "Chest", Back: "Back", Legs: "Legs", Shoulders: "Shldr", Arms: "Arms",
-  Core: "Core", General: "Gen", "Full Body": "Full", Cardio: "Cardio", Rest: "Rest",
+  Core: "Core", General: "Gen", Cardio: "Cardio", Rest: "Rest",
 };
 const SKIP_REASONS = ["Work", "Health", "Other"];
 
@@ -1436,7 +1454,7 @@ function WorkoutCard({ s, set, locked }) {
   const TABS = [["today", "Today"], ["schedules", "Workouts"], ["exercises", "Exercises"]];
 
   return (
-    <Mission title="Workout" rightLabel={rightLabel} color={C.vitality}>
+    <Mission title="Workout" rightLabel={rightLabel} color={C.accent}>
       <div className="flex items-center gap-2 mb-3">
         {TABS.map(([key, label]) => (
           <Touchable
@@ -1444,11 +1462,11 @@ function WorkoutCard({ s, set, locked }) {
             onClick={() => setTab(key)}
             style={{
               flex: 1, borderRadius: 8, padding: "7px 0", textAlign: "center",
-              background: tab === key ? mix(C.vitality, 18) : C.containerHigh,
-              border: `1px solid ${tab === key ? mix(C.vitality, 50) : C.outlineVariant}`,
+              background: tab === key ? mix(C.accent, 18) : C.containerHigh,
+              border: `1px solid ${tab === key ? mix(C.accent, 50) : C.outlineVariant}`,
             }}
           >
-            <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 12, color: tab === key ? C.vitality : C.onSurfaceVariant }}>{label}</span>
+            <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 12, color: tab === key ? C.accent : C.onSurfaceVariant }}>{label}</span>
           </Touchable>
         ))}
       </div>
@@ -1486,7 +1504,8 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
   const vKey = dayKeyFromDate(viewDate);
   const log = gym.logs[viewDate] || null;
   const plannedDay = activeSchedule ? activeSchedule.days[vKey] : null;
-  const exerciseName = (id) => gym.exercises.find((e) => e.id === id)?.name || "(deleted exercise)";
+  const getExercise = (id) => gym.exercises.find((e) => e.id === id);
+  const exerciseName = (id) => getExercise(id)?.name || "(deleted exercise)";
 
   const goDay = (delta) => {
     const next = shiftDate(viewDate, delta);
@@ -1549,7 +1568,7 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
             <ChevronDown size={12} color={C.onSurfaceVariant} style={{ transform: "rotate(-90deg)" }} />
           </Touchable>
         </div>
-        <span style={{ fontFamily: mono, color: C.vitality, fontSize: 11.5 }}>
+        <span style={{ fontFamily: mono, color: C.accent, fontSize: 11.5 }}>
           {log?.skipped ? "skipped" : log ? `${doneCount} / ${log.exercises.length} done` : plannedDay ? plannedDay.muscles.join(", ") : ""}
         </span>
       </div>
@@ -1569,7 +1588,7 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
         <div className="flex flex-col gap-3">
           <div>
             <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 6 }}>
-              {isToday ? "Today's" : formatDisplayDate(viewDate, today) + "'s"} plan ({DAY_LABELS[vKey]}): <span style={{ color: C.vitality, fontWeight: 700 }}>{plannedDay.muscles.join(", ")}</span>
+              {isToday ? "Today's" : formatDisplayDate(viewDate, today) + "'s"} plan ({DAY_LABELS[vKey]}): <span style={{ color: C.accent, fontWeight: 700 }}>{plannedDay.muscles.join(", ")}</span>
             </p>
             {plannedDay.exercises.length === 0 ? (
               <p style={{ color: C.faint, fontSize: 12.5 }}>Rest day — nothing scheduled.</p>
@@ -1586,7 +1605,7 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
           </div>
           {plannedDay.exercises.length > 0 && !skipping && (
             <div className="flex items-center gap-2">
-              <Touchable writeAction onClick={startDay} style={{ flex: 1, background: C.vitality, borderRadius: 10, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              <Touchable writeAction onClick={startDay} style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                 <Dumbbell size={14} color="#fff" />
                 <span style={{ color: "#fff", fontFamily: sans, fontWeight: 700, fontSize: 13 }}>{isToday ? "Start Today's Workout" : "Log this day"}</span>
               </Touchable>
@@ -1621,7 +1640,8 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
             <div className="flex flex-col gap-2">
               {log.exercises.map((ex) => (
                 <ExerciseSetLogger
-                  key={ex.exerciseId} ex={ex} name={exerciseName(ex.exerciseId)} color={C.vitality}
+                  key={ex.exerciseId} ex={ex} name={exerciseName(ex.exerciseId)} color={C.accent}
+                  isTimed={!!getExercise(ex.exerciseId)?.isTimed}
                   onSetChange={(i, field, value) => setSetField(ex.exerciseId, i, field, value)}
                   onAddSet={() => addSet(ex.exerciseId)}
                   onRemoveSet={(i) => removeSet(ex.exerciseId, i)}
@@ -1644,9 +1664,8 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
 function CatchUpSection({ gym, update }) {
   const [openId, setOpenId] = useState(null);
   const pending = gym.catchups.filter((c) => !c.done);
-  const exerciseName = (id) => gym.exercises.find((e) => e.id === id)?.name || "(deleted exercise)";
-
-  if (pending.length === 0) return null;
+  const getExercise = (id) => gym.exercises.find((e) => e.id === id);
+  const exerciseName = (id) => getExercise(id)?.name || "(deleted exercise)";
 
   const setSetField = (catchupId, exerciseId, setIndex, field, value) => {
     update((d) => {
@@ -1711,6 +1730,7 @@ function CatchUpSection({ gym, update }) {
                     c.exercises.map((ex) => (
                       <ExerciseSetLogger
                         key={ex.exerciseId} ex={ex} name={exerciseName(ex.exerciseId)} color={C.accent}
+                        isTimed={!!getExercise(ex.exerciseId)?.isTimed}
                         onSetChange={(i, field, value) => setSetField(c.id, ex.exerciseId, i, field, value)}
                         onAddSet={() => addSet(c.id, ex.exerciseId)}
                         onRemoveSet={(i) => removeSet(c.id, ex.exerciseId, i)}
@@ -1766,7 +1786,7 @@ function ExtraExercises({ date, log, update }) {
         <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 11.5, color: C.faint, letterSpacing: 0.4 }}>EXTRA</span>
         {!adding && (
           <Touchable writeAction onClick={() => setAdding(true)} style={{ padding: 3 }}>
-            <Plus size={14} color={C.vitality} />
+            <Plus size={14} color={C.accent} />
           </Touchable>
         )}
       </div>
@@ -1791,18 +1811,18 @@ function ExtraExercises({ date, log, update }) {
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>SETS</span>
-              <Stepper value={sets} onChange={setSets} color={C.vitality} max={20} />
+              <Stepper value={sets} onChange={setSets} color={C.accent} max={20} />
             </div>
             <div className="flex items-center gap-2">
               <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>REPS</span>
-              <Stepper value={reps} onChange={setReps} color={C.vitality} max={50} />
+              <Stepper value={reps} onChange={setReps} color={C.accent} max={50} />
             </div>
           </div>
           <div className="flex items-center gap-2">
             <Touchable onClick={() => { setAdding(false); setName(""); }} style={{ flex: 1, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Cancel</span>
             </Touchable>
-            <Touchable writeAction onClick={addExtra} style={{ flex: 1, background: C.vitality, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+            <Touchable writeAction onClick={addExtra} style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
               <Plus size={14} color="#fff" />
               <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add</span>
             </Touchable>
@@ -1823,7 +1843,8 @@ function ScheduleCard({ schedule, gym, update }) {
   const [addingExercise, setAddingExercise] = useState(false);
 
   const daySlot = schedule.days[dayTab];
-  const exerciseName = (id) => gym.exercises.find((e) => e.id === id)?.name || "(deleted exercise)";
+  const getExercise = (id) => gym.exercises.find((e) => e.id === id);
+  const exerciseName = (id) => getExercise(id)?.name || "(deleted exercise)";
 
   const setActive = () => {
     update((d) => { d.schedules.forEach((sc) => { sc.active = sc.id === schedule.id; }); });
@@ -1863,12 +1884,12 @@ function ScheduleCard({ schedule, gym, update }) {
         style={{ ...gymInputStyle, padding: "5px 8px", fontWeight: 500, width: "100%" }}
       />
       <Touchable onClick={(e) => { e.stopPropagation(); saveName(); }} style={{ padding: 4, flexShrink: 0 }}>
-        <Check size={15} color={C.vitality} />
+        <Check size={15} color={C.accent} />
       </Touchable>
     </div>
   ) : (
     <div className="flex items-center gap-1.5" style={{ minWidth: 0 }}>
-      {schedule.active && <Star size={13} color={C.vitality} fill={C.vitality} style={{ flexShrink: 0 }} />}
+      {schedule.active && <Star size={13} color={C.accent} fill={C.accent} style={{ flexShrink: 0 }} />}
       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{schedule.name}</span>
       <Touchable onClick={(e) => { e.stopPropagation(); setEditingName(true); }} style={{ padding: 3, flexShrink: 0 }}>
         <Pencil size={12} color={C.faint} />
@@ -1877,11 +1898,11 @@ function ScheduleCard({ schedule, gym, update }) {
   );
 
   return (
-    <Mission title={title} color={C.vitality}>
+    <Mission title={title} color={C.accent}>
       {!schedule.active && (
-        <Touchable writeAction onClick={setActive} style={{ marginBottom: 12, borderRadius: 10, padding: "8px 0", border: `1px solid ${mix(C.vitality, 40)}`, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-          <Star size={13} color={C.vitality} />
-          <span style={{ color: C.vitality, fontFamily: sans, fontWeight: 600, fontSize: 12.5 }}>Set as active workout</span>
+        <Touchable writeAction onClick={setActive} style={{ marginBottom: 12, borderRadius: 10, padding: "8px 0", border: `1px solid ${mix(C.accent, 40)}`, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+          <Star size={13} color={C.accent} />
+          <span style={{ color: C.accent, fontFamily: sans, fontWeight: 600, fontSize: 12.5 }}>Set as active workout</span>
         </Touchable>
       )}
 
@@ -1892,11 +1913,11 @@ function ScheduleCard({ schedule, gym, update }) {
           const isRest = muscles.length === 1 && muscles[0] === "Rest";
           const primary = MUSCLE_ABBR[muscles[0]] || muscles[0];
           const extra = muscles.length - 1;
-          const tint = isSel ? C.vitality : C.onSurfaceVariant;
+          const tint = isSel ? C.accent : C.onSurfaceVariant;
           return (
             <Touchable
               key={k} onClick={() => setDayTab(k)}
-              style={{ flexShrink: 0, borderRadius: 10, padding: "7px 9px", minWidth: 52, background: isSel ? mix(C.vitality, 18) : C.containerHigh, border: `1px solid ${isSel ? mix(C.vitality, 50) : C.outlineVariant}`, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}
+              style={{ flexShrink: 0, borderRadius: 10, padding: "7px 9px", minWidth: 52, background: isSel ? mix(C.accent, 18) : C.containerHigh, border: `1px solid ${isSel ? mix(C.accent, 50) : C.outlineVariant}`, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}
             >
               <div style={{ fontFamily: sans, fontWeight: 700, fontSize: 11, color: tint }}>{DAY_LABELS[k]}</div>
               {isRest ? (
@@ -1906,9 +1927,9 @@ function ScheduleCard({ schedule, gym, update }) {
                 </div>
               ) : (
                 <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-                  <span style={{ fontFamily: mono, fontSize: 8.5, color: isSel ? C.vitality : C.faint, whiteSpace: "nowrap" }}>{primary}</span>
+                  <span style={{ fontFamily: mono, fontSize: 8.5, color: isSel ? C.accent : C.faint, whiteSpace: "nowrap" }}>{primary}</span>
                   {extra > 0 && (
-                    <span style={{ fontFamily: mono, fontSize: 7.5, fontWeight: 700, color: isSel ? C.surface : C.onSurfaceVariant, background: isSel ? C.vitality : mix(C.onSurfaceVariant, 25), borderRadius: 999, padding: "1px 4px", lineHeight: "10px", flexShrink: 0 }}>+{extra}</span>
+                    <span style={{ fontFamily: mono, fontSize: 7.5, fontWeight: 700, color: isSel ? C.surface : C.onSurfaceVariant, background: isSel ? C.accent : mix(C.onSurfaceVariant, 25), borderRadius: 999, padding: "1px 4px", lineHeight: "10px", flexShrink: 0 }}>+{extra}</span>
                   )}
                 </div>
               )}
@@ -1925,8 +1946,8 @@ function ScheduleCard({ schedule, gym, update }) {
           {MUSCLES.map((m) => {
             const isSel = daySlot.muscles.includes(m);
             return (
-              <Touchable key={m} onClick={() => toggleDayMuscle(m)} style={{ borderRadius: 8, padding: "6px 10px", background: isSel ? mix(C.vitality, 18) : C.containerHigh, border: `1px solid ${isSel ? mix(C.vitality, 50) : C.outlineVariant}` }}>
-                <span style={{ fontFamily: sans, fontWeight: 600, fontSize: 11.5, color: isSel ? C.vitality : C.onSurfaceVariant }}>{m}</span>
+              <Touchable key={m} onClick={() => toggleDayMuscle(m)} style={{ borderRadius: 8, padding: "6px 10px", background: isSel ? mix(C.accent, 18) : C.containerHigh, border: `1px solid ${isSel ? mix(C.accent, 50) : C.outlineVariant}` }}>
+                <span style={{ fontFamily: sans, fontWeight: 600, fontSize: 11.5, color: isSel ? C.accent : C.onSurfaceVariant }}>{m}</span>
               </Touchable>
             );
           })}
@@ -1937,17 +1958,21 @@ function ScheduleCard({ schedule, gym, update }) {
         <p style={{ color: C.faint, fontSize: 12.5, marginBottom: 10 }}>No exercises added for {DAY_LABELS[dayTab]} yet.</p>
       ) : (
         <div className="flex flex-col gap-2" style={{ marginBottom: 10 }}>
-          {daySlot.exercises.map((e, idx) => (
-            <div key={idx} style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 10, padding: "8px 12px" }} className="flex items-center gap-2 flex-wrap">
-              <span style={{ color: C.onSurface, fontFamily: sans, fontSize: 13, flex: 1, minWidth: 100 }}>{exerciseName(e.exerciseId)}</span>
-              <Stepper value={e.targetSets} onChange={(v) => updateTarget(idx, "targetSets", v)} color={C.vitality} max={20} />
-              <span style={{ color: C.faint, fontFamily: mono, fontSize: 11 }}>×</span>
-              <Stepper value={e.targetReps} onChange={(v) => updateTarget(idx, "targetReps", v)} color={C.vitality} max={50} />
-              <Touchable writeAction onClick={() => removeExerciseFromDay(idx)} style={{ padding: 4 }}>
-                <Trash2 size={13} color={C.faint} />
-              </Touchable>
-            </div>
-          ))}
+          {daySlot.exercises.map((e, idx) => {
+            const exIsTimed = !!getExercise(e.exerciseId)?.isTimed;
+            return (
+              <div key={idx} style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 10, padding: "8px 12px" }} className="flex items-center gap-2 flex-wrap">
+                <span style={{ color: C.onSurface, fontFamily: sans, fontSize: 13, flex: 1, minWidth: 100 }}>{exerciseName(e.exerciseId)}</span>
+                <Stepper value={e.targetSets} onChange={(v) => updateTarget(idx, "targetSets", v)} color={C.accent} max={20} />
+                <span style={{ color: C.faint, fontFamily: mono, fontSize: 11 }}>×</span>
+                <Stepper value={e.targetReps} onChange={(v) => updateTarget(idx, "targetReps", v)} color={C.accent} max={50} />
+                <span style={{ color: C.faint, fontFamily: mono, fontSize: 10 }}>{exIsTimed ? "min" : "reps"}</span>
+                <Touchable writeAction onClick={() => removeExerciseFromDay(idx)} style={{ padding: 4 }}>
+                  <Trash2 size={13} color={C.faint} />
+                </Touchable>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -1955,8 +1980,8 @@ function ScheduleCard({ schedule, gym, update }) {
         <AddExerciseForm schedule={schedule} dayKey={dayTab} gym={gym} update={update} onDone={() => setAddingExercise(false)} />
       ) : (
         <Touchable writeAction onClick={() => setAddingExercise(true)} style={{ borderRadius: 10, padding: "6px 0", border: `1px dashed ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
-          <Plus size={13} color={C.vitality} />
-          <span style={{ color: C.vitality, fontFamily: sans, fontWeight: 600, fontSize: 12 }}>Add Exercise to {DAY_LABELS[dayTab]}</span>
+          <Plus size={13} color={C.accent} />
+          <span style={{ color: C.accent, fontFamily: sans, fontWeight: 600, fontSize: 12 }}>Add Exercise to {DAY_LABELS[dayTab]}</span>
         </Touchable>
       )}
 
@@ -1980,6 +2005,7 @@ function AddExerciseForm({ schedule, dayKey, gym, update, onDone }) {
   const [selectedId, setSelectedId] = useState("");
   const [newName, setNewName] = useState("");
   const [newMuscle, setNewMuscle] = useState(isRestDay ? EXERCISE_CATEGORIES[0] : dayMuscles[0]);
+  const [newIsTimed, setNewIsTimed] = useState(false);
   const [sets, setSets] = useState(3);
   const [reps, setReps] = useState(10);
   const [dupWarning, setDupWarning] = useState(false);
@@ -1987,6 +2013,7 @@ function AddExerciseForm({ schedule, dayKey, gym, update, onDone }) {
   const scopedExercises = includeAll ? gym.exercises : gym.exercises.filter((ex) => dayMuscles.includes(ex.muscle) || ex.muscle === "General");
   const visibleExercises = scopedExercises.length > 0 ? scopedExercises : gym.exercises;
   const effectiveSelectedId = visibleExercises.some((ex) => ex.id === selectedId) ? selectedId : (visibleExercises[0]?.id || "");
+  const isTimed = mode === "new" ? newIsTimed : !!gym.exercises.find((ex) => ex.id === effectiveSelectedId)?.isTimed;
 
   const commit = () => {
     let trimmed = "";
@@ -2005,7 +2032,7 @@ function AddExerciseForm({ schedule, dayKey, gym, update, onDone }) {
         const norm = trimmed.toLowerCase();
         const existing = d.exercises.find((ex) => ex.name.trim().toLowerCase() === norm);
         exId = existing ? existing.id : uid();
-        if (!existing) d.exercises.push({ id: exId, name: trimmed, muscle: newMuscle });
+        if (!existing) d.exercises.push({ id: exId, name: trimmed, muscle: newMuscle, isTimed: newIsTimed });
       }
       sch.days[dayKey].exercises.push({ exerciseId: exId, targetSets: sets, targetReps: reps });
     });
@@ -2015,11 +2042,11 @@ function AddExerciseForm({ schedule, dayKey, gym, update, onDone }) {
   return (
     <div style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 10, padding: 12 }} className="flex flex-col gap-2">
       <div className="flex gap-2 mb-1">
-        <Touchable onClick={() => setMode("existing")} style={{ flex: 1, borderRadius: 8, padding: "6px 0", textAlign: "center", background: mode === "existing" ? mix(C.vitality, 18) : "transparent", border: `1px solid ${mode === "existing" ? mix(C.vitality, 50) : C.outlineVariant}` }}>
-          <span style={{ fontFamily: sans, fontSize: 12, fontWeight: 600, color: mode === "existing" ? C.vitality : C.onSurfaceVariant }}>From Database</span>
+        <Touchable onClick={() => setMode("existing")} style={{ flex: 1, borderRadius: 8, padding: "6px 0", textAlign: "center", background: mode === "existing" ? mix(C.accent, 18) : "transparent", border: `1px solid ${mode === "existing" ? mix(C.accent, 50) : C.outlineVariant}` }}>
+          <span style={{ fontFamily: sans, fontSize: 12, fontWeight: 600, color: mode === "existing" ? C.accent : C.onSurfaceVariant }}>From Database</span>
         </Touchable>
-        <Touchable onClick={() => setMode("new")} style={{ flex: 1, borderRadius: 8, padding: "6px 0", textAlign: "center", background: mode === "new" ? mix(C.vitality, 18) : "transparent", border: `1px solid ${mode === "new" ? mix(C.vitality, 50) : C.outlineVariant}` }}>
-          <span style={{ fontFamily: sans, fontSize: 12, fontWeight: 600, color: mode === "new" ? C.vitality : C.onSurfaceVariant }}>New Exercise</span>
+        <Touchable onClick={() => setMode("new")} style={{ flex: 1, borderRadius: 8, padding: "6px 0", textAlign: "center", background: mode === "new" ? mix(C.accent, 18) : "transparent", border: `1px solid ${mode === "new" ? mix(C.accent, 50) : C.outlineVariant}` }}>
+          <span style={{ fontFamily: sans, fontSize: 12, fontWeight: 600, color: mode === "new" ? C.accent : C.onSurfaceVariant }}>New Exercise</span>
         </Touchable>
       </div>
 
@@ -2033,7 +2060,7 @@ function AddExerciseForm({ schedule, dayKey, gym, update, onDone }) {
             </select>
             {!isRestDay && (
               <Touchable onClick={() => setIncludeAll((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0" }}>
-                <div style={{ width: 15, height: 15, borderRadius: 4, flexShrink: 0, border: `2px solid ${includeAll ? C.vitality : C.faint}`, background: includeAll ? C.vitality : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ width: 15, height: 15, borderRadius: 4, flexShrink: 0, border: `2px solid ${includeAll ? C.accent : C.faint}`, background: includeAll ? C.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
                   {includeAll && <Check size={9} color={C.surface} strokeWidth={3.5} />}
                 </div>
                 <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontSize: 11.5 }}>
@@ -2058,17 +2085,25 @@ function AddExerciseForm({ schedule, dayKey, gym, update, onDone }) {
           <select value={newMuscle} onChange={(e) => setNewMuscle(e.target.value)} style={gymSelectStyle} disabled={dupWarning}>
             {EXERCISE_CATEGORIES.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
+          {!dupWarning && (
+            <Touchable onClick={() => setNewIsTimed((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0" }}>
+              <div style={{ width: 15, height: 15, borderRadius: 4, flexShrink: 0, border: `2px solid ${newIsTimed ? C.accent : C.faint}`, background: newIsTimed ? C.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {newIsTimed && <Check size={9} color={C.surface} strokeWidth={3.5} />}
+              </div>
+              <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontSize: 11.5 }}>Track by time (minutes) instead of weight &amp; reps</span>
+            </Touchable>
+          )}
         </>
       )}
 
       <div className="flex items-center gap-4 mt-1">
         <div className="flex items-center gap-2">
           <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>SETS</span>
-          <Stepper value={sets} onChange={setSets} color={C.vitality} max={20} />
+          <Stepper value={sets} onChange={setSets} color={C.accent} max={20} />
         </div>
         <div className="flex items-center gap-2">
-          <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>REPS</span>
-          <Stepper value={reps} onChange={setReps} color={C.vitality} max={50} />
+          <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>{isTimed ? "MIN" : "REPS"}</span>
+          <Stepper value={reps} onChange={setReps} color={C.accent} max={50} />
         </div>
       </div>
 
@@ -2076,7 +2111,7 @@ function AddExerciseForm({ schedule, dayKey, gym, update, onDone }) {
         <Touchable onClick={onDone} style={{ flex: 1, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Cancel</span>
         </Touchable>
-        <Touchable writeAction onClick={commit} style={{ flex: 1, background: C.vitality, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+        <Touchable writeAction onClick={commit} style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
           <Plus size={14} color="#fff" />
           <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add</span>
         </Touchable>
@@ -2104,8 +2139,8 @@ function CreateScheduleCard({ update }) {
     <div style={{ background: C.container, border: `1px dashed ${C.outlineVariant}`, borderRadius: 10 }} className="p-2">
       {!adding ? (
         <Touchable writeAction onClick={() => setAdding(true)} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "3px 0" }}>
-          <Plus size={13} color={C.vitality} />
-          <span style={{ color: C.vitality, fontFamily: sans, fontWeight: 700, fontSize: 12 }}>Create Workout</span>
+          <Plus size={13} color={C.accent} />
+          <span style={{ color: C.accent, fontFamily: sans, fontWeight: 700, fontSize: 12 }}>Create Workout</span>
         </Touchable>
       ) : (
         <div className="flex flex-col gap-2">
@@ -2114,7 +2149,7 @@ function CreateScheduleCard({ update }) {
             <Touchable onClick={() => { setAdding(false); setName(""); }} style={{ flex: 1, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Cancel</span>
             </Touchable>
-            <Touchable writeAction onClick={create} style={{ flex: 1, background: C.vitality, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+            <Touchable writeAction onClick={create} style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
               <Plus size={14} color="#fff" />
               <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Create</span>
             </Touchable>
@@ -2133,24 +2168,26 @@ function ExerciseDatabaseCard({ gym, update }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [muscle, setMuscle] = useState(EXERCISE_CATEGORIES[0]);
+  const [isTimed, setIsTimed] = useState(false);
   const [dupWarning, setDupWarning] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState("");
   const [editMuscle, setEditMuscle] = useState(EXERCISE_CATEGORIES[0]);
+  const [editIsTimed, setEditIsTimed] = useState(false);
 
   const addExercise = () => {
     const trimmed = name.trim();
     if (!trimmed) return;
     const norm = trimmed.toLowerCase();
     if (gym.exercises.some((e) => e.name.trim().toLowerCase() === norm)) { setDupWarning(true); return; }
-    update((d) => { d.exercises.push({ id: uid(), name: trimmed, muscle }); });
-    setName(""); setDupWarning(false); setAdding(false);
+    update((d) => { d.exercises.push({ id: uid(), name: trimmed, muscle, isTimed }); });
+    setName(""); setIsTimed(false); setDupWarning(false); setAdding(false);
   };
-  const startEdit = (ex) => { setEditingId(ex.id); setEditName(ex.name); setEditMuscle(ex.muscle); setAdding(false); };
+  const startEdit = (ex) => { setEditingId(ex.id); setEditName(ex.name); setEditMuscle(ex.muscle); setEditIsTimed(!!ex.isTimed); setAdding(false); };
   const saveEdit = () => {
     const trimmed = editName.trim();
     if (!trimmed) return;
-    update((d) => { const ex = d.exercises.find((e) => e.id === editingId); if (ex) { ex.name = trimmed; ex.muscle = editMuscle; } });
+    update((d) => { const ex = d.exercises.find((e) => e.id === editingId); if (ex) { ex.name = trimmed; ex.muscle = editMuscle; ex.isTimed = editIsTimed; } });
     setEditingId(null);
   };
   const deleteExercise = (id) => {
@@ -2175,11 +2212,17 @@ function ExerciseDatabaseCard({ gym, update }) {
         <select value={editMuscle} onChange={(e) => setEditMuscle(e.target.value)} style={gymSelectStyle}>
           {EXERCISE_CATEGORIES.map((m) => <option key={m} value={m}>{m}</option>)}
         </select>
+        <Touchable onClick={() => setEditIsTimed((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0" }}>
+          <div style={{ width: 15, height: 15, borderRadius: 4, flexShrink: 0, border: `2px solid ${editIsTimed ? C.accent : C.faint}`, background: editIsTimed ? C.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {editIsTimed && <Check size={9} color={C.surface} strokeWidth={3.5} />}
+          </div>
+          <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontSize: 11.5 }}>Track by time (minutes) instead of weight &amp; reps</span>
+        </Touchable>
         <div className="flex items-center gap-2">
           <Touchable onClick={() => setEditingId(null)} style={{ flex: 1, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Cancel</span>
           </Touchable>
-          <Touchable writeAction onClick={saveEdit} style={{ flex: 1, background: C.vitality, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+          <Touchable writeAction onClick={saveEdit} style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
             <Save size={14} color="#fff" />
             <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Save</span>
           </Touchable>
@@ -2188,6 +2231,9 @@ function ExerciseDatabaseCard({ gym, update }) {
     ) : (
       <div key={ex.id} style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 10 }} className="mb-2 px-4 py-3 flex items-center gap-2">
         <span style={{ flex: 1, color: C.onSurface, fontFamily: sans, fontSize: 13.5 }}>{ex.name}</span>
+        {ex.isTimed && (
+          <span style={{ fontFamily: mono, fontSize: 9.5, color: C.faint, background: C.containerHigh, borderRadius: 6, padding: "2px 6px", flexShrink: 0 }}>min</span>
+        )}
         <Touchable writeAction onClick={() => startEdit(ex)} style={{ padding: 4 }}>
           <Pencil size={14} color={C.faint} />
         </Touchable>
@@ -2204,8 +2250,8 @@ function ExerciseDatabaseCard({ gym, update }) {
         {["All", ...EXERCISE_CATEGORIES].map((m) => {
           const isSel = m === filterMuscle;
           return (
-            <Touchable key={m} onClick={() => setFilterMuscle(m)} style={{ flexShrink: 0, borderRadius: 8, padding: "6px 10px", background: isSel ? mix(C.vitality, 18) : C.containerHigh, border: `1px solid ${isSel ? mix(C.vitality, 50) : C.outlineVariant}` }}>
-              <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 11, color: isSel ? C.vitality : C.onSurfaceVariant, whiteSpace: "nowrap" }}>{m}</span>
+            <Touchable key={m} onClick={() => setFilterMuscle(m)} style={{ flexShrink: 0, borderRadius: 8, padding: "6px 10px", background: isSel ? mix(C.accent, 18) : C.containerHigh, border: `1px solid ${isSel ? mix(C.accent, 50) : C.outlineVariant}` }}>
+              <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 11, color: isSel ? C.accent : C.onSurfaceVariant, whiteSpace: "nowrap" }}>{m}</span>
             </Touchable>
           );
         })}
@@ -2232,8 +2278,8 @@ function ExerciseDatabaseCard({ gym, update }) {
       <div style={{ background: C.container, border: `1px dashed ${C.outlineVariant}`, borderRadius: 10 }} className="p-2">
         {!adding ? (
           <Touchable writeAction onClick={() => { setAdding(true); setMuscle(filterMuscle === "All" ? EXERCISE_CATEGORIES[0] : filterMuscle); }} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "3px 0" }}>
-            <Plus size={13} color={C.vitality} />
-            <span style={{ color: C.vitality, fontFamily: sans, fontWeight: 700, fontSize: 12 }}>Add Exercise</span>
+            <Plus size={13} color={C.accent} />
+            <span style={{ color: C.accent, fontFamily: sans, fontWeight: 700, fontSize: 12 }}>Add Exercise</span>
           </Touchable>
         ) : (
           <div className="flex flex-col gap-2">
@@ -2250,11 +2296,17 @@ function ExerciseDatabaseCard({ gym, update }) {
             <select value={muscle} onChange={(e) => setMuscle(e.target.value)} style={gymSelectStyle}>
               {EXERCISE_CATEGORIES.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
+            <Touchable onClick={() => setIsTimed((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0" }}>
+              <div style={{ width: 15, height: 15, borderRadius: 4, flexShrink: 0, border: `2px solid ${isTimed ? C.accent : C.faint}`, background: isTimed ? C.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {isTimed && <Check size={9} color={C.surface} strokeWidth={3.5} />}
+              </div>
+              <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontSize: 11.5 }}>Track by time (minutes) instead of weight &amp; reps</span>
+            </Touchable>
             <div className="flex items-center gap-2">
-              <Touchable onClick={() => { setAdding(false); setName(""); setDupWarning(false); }} style={{ flex: 1, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Touchable onClick={() => { setAdding(false); setName(""); setIsTimed(false); setDupWarning(false); }} style={{ flex: 1, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Cancel</span>
               </Touchable>
-              <Touchable writeAction onClick={addExercise} style={{ flex: 1, background: C.vitality, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              <Touchable writeAction onClick={addExercise} style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                 <Plus size={14} color="#fff" />
                 <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add</span>
               </Touchable>
@@ -2289,11 +2341,11 @@ function VitalityOverviewTiles({ s, eff }) {
       <div style={tileStyle}>
         <div style={labelStyle}>TODAY</div>
         <div style={valueStyle}>{todayMuscle}</div>
-        <div style={{ ...subStyle, color: activeSchedule ? C.vitality : C.faint }}>{activeSchedule ? activeSchedule.name : "No active workout"}</div>
+        <div style={{ ...subStyle, color: activeSchedule ? C.accent : C.faint }}>{activeSchedule ? activeSchedule.name : "No active workout"}</div>
       </div>
       <div style={tileStyle}>
         <div style={labelStyle}>TREKS</div>
-        <div style={valueStyle}>{eff.treks}/9</div>
+        <div style={{ ...valueStyle, color: C.vitality }}>{eff.treks}/9</div>
       </div>
       <div style={{ ...tileStyle, opacity: 0.55 }}>
         <div style={labelStyle}>PROGRESS</div>
@@ -6024,9 +6076,9 @@ export default function LifeRPG() {
   const todayKey = fmtDate(today);
   const todayDietLog = state.diet?.logs?.[todayKey];
   const todayDietPlan = todayDietLog?.planId ? state.diet.plans.find((p) => p.id === todayDietLog.planId) : null;
-  const todayProtein = todayDietPlan
+  const todayProtein = (todayDietPlan
     ? todayDietPlan.items.filter((i) => todayDietLog.completed?.[i.id]).reduce((sum, i) => sum + (Number(i.protein) || 0), 0)
-    : 0;
+    : 0) + (todayDietLog?.extras || []).reduce((sum, i) => sum + (Number(i.protein) || 0), 0);
   const todayProteinTarget = todayDietPlan
     ? todayDietPlan.items.reduce((sum, i) => sum + (Number(i.protein) || 0), 0)
     : 0;
@@ -6511,7 +6563,7 @@ export default function LifeRPG() {
                       <span style={{ fontSize: 9, fontWeight: 600, opacity: 0.65 }}>/{Math.round(todayProteinTarget)}g</span>
                     </>
                   ) : (
-                    "0g"
+                    `${Math.round(todayProtein)}g`
                   )
                 }
                 sub="protein"
