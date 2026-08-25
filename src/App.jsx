@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useContext, useMemo, createContext } from "react";
+import { createPortal } from "react-dom";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { db, QUESTS_COLLECTION } from "./firebase.js";
 import {
@@ -107,6 +108,7 @@ const MAIN_DOC_ID = "main";
 const AUTH_DOC_ID = "_auth_";
 const READER_LOG_DOC_ID = "_reader_log_";
 const ReadOnlyContext = createContext(false);
+const ThemeModeContext = createContext("dark");
 
 async function sha256Hex(str) {
   const enc = new TextEncoder().encode(str);
@@ -1987,15 +1989,19 @@ function ScheduleCard({ schedule, gym, update }) {
           {daySlot.exercises.map((e, idx) => {
             const exIsTimed = !!getExercise(e.exerciseId)?.isTimed;
             return (
-              <div key={idx} style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 10, padding: "8px 12px" }} className="flex items-center gap-2 flex-wrap">
-                <span style={{ color: C.onSurface, fontFamily: sans, fontSize: 13, flex: 1, minWidth: 100 }}>{exerciseName(e.exerciseId)}</span>
-                <Stepper value={e.targetSets} onChange={(v) => updateTarget(idx, "targetSets", v)} color={C.accent} max={20} />
-                <span style={{ color: C.faint, fontFamily: mono, fontSize: 11 }}>×</span>
-                <Stepper value={e.targetReps} onChange={(v) => updateTarget(idx, "targetReps", v)} color={C.accent} max={50} />
-                <span style={{ color: C.faint, fontFamily: mono, fontSize: 10 }}>{exIsTimed ? "min" : "reps"}</span>
-                <Touchable writeAction onClick={() => removeExerciseFromDay(idx)} style={{ padding: 4 }}>
-                  <Trash2 size={13} color={C.faint} />
-                </Touchable>
+              <div key={idx} style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 10, padding: "8px 12px" }} className="flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <span style={{ color: C.onSurface, fontFamily: sans, fontSize: 13, flex: 1, minWidth: 0 }}>{exerciseName(e.exerciseId)}</span>
+                  <Touchable writeAction onClick={() => removeExerciseFromDay(idx)} style={{ padding: 4, flexShrink: 0 }}>
+                    <Trash2 size={13} color={C.faint} />
+                  </Touchable>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Stepper value={e.targetSets} onChange={(v) => updateTarget(idx, "targetSets", v)} color={C.accent} max={20} />
+                  <span style={{ color: C.faint, fontFamily: mono, fontSize: 11 }}>×</span>
+                  <Stepper value={e.targetReps} onChange={(v) => updateTarget(idx, "targetReps", v)} color={C.accent} max={50} />
+                  <span style={{ color: C.faint, fontFamily: mono, fontSize: 10 }}>{exIsTimed ? "min" : "reps"}</span>
+                </div>
               </div>
             );
           })}
@@ -3707,19 +3713,51 @@ function CreateDietCard({ set, onCreate }) {
    any day outside the range instead of hiding it, so the month shape stays
    consistent. */
 function DatePicker({ selected, onSelect, hasMarker, maxDate, minDate }) {
+  const mode = useContext(ThemeModeContext);
   const [open, setOpen] = useState(false);
   const selDate = new Date(selected + "T00:00:00");
   const [viewYear, setViewYear] = useState(selDate.getFullYear());
   const [viewMonth, setViewMonth] = useState(selDate.getMonth());
-  const wrapRef = useRef(null);
+  const [coords, setCoords] = useState(null);
+  const triggerRef = useRef(null);
+  const popupRef = useRef(null);
   const isToday = selected === fmtDate(new Date());
+
+  // The popup is portaled to <body> (fixed position) so it can never be
+  // clipped by a scroll/overflow-hidden ancestor (e.g. a collapsed Mission
+  // card) — it always escapes and floats above everything.
+  const POPUP_WIDTH = 280;
+  const recalcCoords = useCallback(() => {
+    if (!triggerRef.current) return;
+    const r = triggerRef.current.getBoundingClientRect();
+    const margin = 8;
+    let left = r.left + r.width / 2;
+    const half = POPUP_WIDTH / 2;
+    left = Math.min(Math.max(left, half + margin), window.innerWidth - half - margin);
+    setCoords({ top: r.bottom + margin, left });
+  }, []);
 
   useEffect(() => {
     if (!open) return;
-    const handler = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    const handler = (e) => {
+      if (triggerRef.current && triggerRef.current.contains(e.target)) return;
+      if (popupRef.current && popupRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    recalcCoords();
+    window.addEventListener("resize", recalcCoords);
+    window.addEventListener("scroll", recalcCoords, true);
+    return () => {
+      window.removeEventListener("resize", recalcCoords);
+      window.removeEventListener("scroll", recalcCoords, true);
+    };
+  }, [open, recalcCoords]);
 
   const openPicker = () => {
     setViewYear(selDate.getFullYear());
@@ -3748,7 +3786,7 @@ function DatePicker({ selected, onSelect, hasMarker, maxDate, minDate }) {
   const jumpTarget = maxDate && todayDate > maxDate ? fmtDate(maxDate) : todayStr;
 
   return (
-    <div ref={wrapRef} style={{ position: "relative" }}>
+    <div ref={triggerRef} style={{ position: "relative" }}>
       <Touchable
         onClick={openPicker}
         style={{
@@ -3773,11 +3811,13 @@ function DatePicker({ selected, onSelect, hasMarker, maxDate, minDate }) {
         </div>
       </Touchable>
 
-      {open && (
+      {open && coords && createPortal(
         <div
+          ref={popupRef}
+          className={`theme-${mode}`}
           style={{
-            position: "absolute", top: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)",
-            zIndex: 40, width: 280,
+            position: "fixed", top: coords.top, left: coords.left, transform: "translateX(-50%)",
+            zIndex: 1000, width: POPUP_WIDTH,
             background: C.containerHighest, border: `1px solid ${C.outlineVariant}`,
             borderRadius: 16, padding: 14, boxShadow: "0 12px 28px rgba(0,0,0,0.4)",
           }}
@@ -3836,7 +3876,8 @@ function DatePicker({ selected, onSelect, hasMarker, maxDate, minDate }) {
             <Calendar size={13} color={C.accent} />
             <span style={{ fontFamily: sans, fontWeight: 600, fontSize: 12.5, color: C.accent }}>Jump to Today</span>
           </Touchable>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -5335,17 +5376,6 @@ function TopAppBar({ syncStatus, onMenu, mode, onToggleTheme, readOnly, onQuoteC
         >
           LEVEL 1
         </span>
-        {readOnly && (
-          <span
-            style={{
-              fontFamily: sans, fontWeight: 700, fontSize: 9.5, letterSpacing: 0.5,
-              color: C.wealth, background: mix(C.wealth, 18), borderRadius: 8, padding: "3px 7px",
-              display: "flex", alignItems: "center", gap: 3,
-            }}
-          >
-            <Lock size={9} /> VIEW ONLY
-          </span>
-        )}
       </div>
       <div className="flex items-center gap-2">
         {showQuoteButton && <QuoteButton onClick={onQuoteClick} />}
@@ -6151,6 +6181,7 @@ export default function LifeRPG() {
   const activeColor = tabs.find((t) => t.id === tab)?.color || C.accent;
 
   return (
+    <ThemeModeContext.Provider value={mode}>
     <ReadOnlyContext.Provider value={readOnly}>
     <div
       className={`theme-${mode}`}
@@ -6722,5 +6753,6 @@ export default function LifeRPG() {
       </div>
     </div>
     </ReadOnlyContext.Provider>
+    </ThemeModeContext.Provider>
   );
 }
