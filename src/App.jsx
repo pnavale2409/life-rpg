@@ -5732,7 +5732,7 @@ function LevelCard({ name, onNameChange, overall, totalXP, today, mode, status, 
             style={{
               maxHeight: compact ? 0 : 28,
               opacity: compact ? 0 : 1,
-              overflow: "hidden",
+              overflow: compact ? "hidden" : "visible",
               transition: "max-height 0.3s ease, opacity 0.2s ease",
             }}
           >
