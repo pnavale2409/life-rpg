@@ -786,11 +786,13 @@ function Touchable({ children, onClick, style, className, disabled, rippleColor,
    shrinks to fit instead of overflowing. Geometry is drawn in a
    viewBox matching `size`, so the stroke scales down proportionally
    too rather than looking chunky on a shrunk ring. */
-function Ring({ value, max, color, size = 52, stroke = 5, children, glow = false, fluid = false }) {
+function Ring({ value, max, color, size = 52, stroke = 5, children, glow = false, fluid = false, fillHeight = false }) {
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const pct = clamp(value / max, 0, 1);
-  const boxStyle = fluid
+  const boxStyle = fillHeight
+    ? { height: "100%", width: "auto", maxWidth: size, aspectRatio: "1 / 1" }
+    : fluid
     ? { width: "100%", maxWidth: size, aspectRatio: "1 / 1" }
     : { width: size, height: size };
   return (
@@ -879,48 +881,81 @@ function Counter({ value, max, onChange, color }) {
 /* ---------------------------------------------------------------
    QUEST STRIP — horizontal scroll of week diamonds, HUD tracker feel
 --------------------------------------------------------------- */
-function QuestStrip({ today }) {
+function QuestStrip({ today, compact = false }) {
   const idx = clamp(dayIndex(today), 1, TOTAL_DAYS);
+  const pct = clamp(idx / TOTAL_DAYS, 0, 1);
   const weeks = Array.from({ length: 13 }, (_, w) => {
     const startDay = w * 7 + 1;
     return Array.from({ length: 7 }, (_, d) => startDay + d).filter((n) => n <= TOTAL_DAYS);
   });
   return (
-    <div className="w-full overflow-x-auto" style={{ WebkitOverflowScrolling: "touch" }}>
-      <div className="flex gap-2.5 px-4 py-3" style={{ minWidth: 560 }}>
-        {weeks.map((week, wi) => {
-          const isCurrent = idx >= week[0] && idx <= week[week.length - 1];
-          return (
-            <div
-              key={wi}
-              className="flex flex-col items-center gap-1.5 flex-shrink-0"
-              style={{
-                padding: "6px 10px",
-                borderRadius: 12,
-                background: isCurrent ? `${mix(C.accent, 13)}` : "transparent",
-                border: isCurrent ? `1px solid ${mix(C.accent, 33)}` : "1px solid transparent",
-                boxShadow: isCurrent ? `0 0 10px ${C.glow}` : "none",
-              }}
-            >
-              <div className="flex gap-[4px]">
-                {week.map((n) => {
-                  const state = n < idx ? "past" : n === idx ? "now" : "future";
-                  return (
-                    <Diamond
-                      key={n}
-                      size={n === idx ? 7 : 6}
-                      color={state === "past" ? C.resolve : state === "now" ? C.accent : C.outlineVariant}
-                      glow={state === "now"}
-                    />
-                  );
-                })}
-              </div>
-              <span style={{ fontFamily: mono, fontSize: 9.5, fontWeight: isCurrent ? 700 : 500, color: isCurrent ? C.accent : C.faint, letterSpacing: 0.5 }}>
-                W{wi + 1}
-              </span>
-            </div>
-          );
-        })}
+    <div style={{ position: "relative" }}>
+      {/* full 13-week diamond strip — collapses to zero height instead of
+          unmounting, so it visibly shrinks rather than jump-cuts */}
+      <div
+        style={{
+          maxHeight: compact ? 0 : 76,
+          opacity: compact ? 0 : 1,
+          overflow: "hidden",
+          transition: "max-height 0.3s ease, opacity 0.2s ease",
+        }}
+      >
+        <div className="w-full overflow-x-auto" style={{ WebkitOverflowScrolling: "touch" }}>
+          <div className="flex gap-2.5 px-4 py-3" style={{ minWidth: 560 }}>
+            {weeks.map((week, wi) => {
+              const isCurrent = idx >= week[0] && idx <= week[week.length - 1];
+              return (
+                <div
+                  key={wi}
+                  className="flex flex-col items-center gap-1.5 flex-shrink-0"
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 12,
+                    background: isCurrent ? `${mix(C.accent, 13)}` : "transparent",
+                    border: isCurrent ? `1px solid ${mix(C.accent, 33)}` : "1px solid transparent",
+                    boxShadow: isCurrent ? `0 0 10px ${C.glow}` : "none",
+                  }}
+                >
+                  <div className="flex gap-[4px]">
+                    {week.map((n) => {
+                      const state = n < idx ? "past" : n === idx ? "now" : "future";
+                      return (
+                        <Diamond
+                          key={n}
+                          size={n === idx ? 7 : 6}
+                          color={state === "past" ? C.resolve : state === "now" ? C.accent : C.outlineVariant}
+                          glow={state === "now"}
+                        />
+                      );
+                    })}
+                  </div>
+                  <span style={{ fontFamily: mono, fontSize: 9.5, fontWeight: isCurrent ? 700 : 500, color: isCurrent ? C.accent : C.faint, letterSpacing: 0.5 }}>
+                    W{wi + 1}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* compact mode — single slim progress line with a marker at today,
+          crossfades in as the full strip collapses. The Day X/91 · Week N
+          line already rendered right below this component covers the text,
+          so this layer stays purely visual. */}
+      <div
+        style={{
+          maxHeight: compact ? 26 : 0,
+          opacity: compact ? 1 : 0,
+          overflow: "hidden",
+          transition: "max-height 0.3s ease, opacity 0.2s ease",
+        }}
+      >
+        <div className="px-4" style={{ padding: "11px 16px 8px" }}>
+          <div style={{ position: "relative", height: 4, background: C.outlineVariant, borderRadius: 3 }}>
+            <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${pct * 100}%`, background: C.resolve, borderRadius: 3, transition: "width 0.4s ease" }} />
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -2442,7 +2477,7 @@ function VitalityOverviewTiles({ s, eff, onOpenProgress }) {
         <TrendingUp size={18} color={C.accent} style={{ marginTop: 5 }} />
       </Touchable>
       <div className="flex items-center justify-center" style={{ minWidth: 0, containerType: "inline-size" }}>
-        <Ring value={eff.treks} max={9} color={C.vitality} size={68} stroke={5} fluid>
+        <Ring value={eff.treks} max={9} color={C.vitality} size={84} stroke={5} fillHeight>
           <div className="flex flex-col items-center" style={{ gap: 1 }}>
             <span style={{ fontFamily: mono, fontSize: "clamp(10px, 19cqw, 13px)", fontWeight: 700, color: C.onSurface, lineHeight: 1 }}>
               {eff.treks}<span style={{ fontSize: "0.6em", fontWeight: 600, opacity: 0.65 }}>/9</span>
@@ -5631,7 +5666,7 @@ function StatusChip({ status, enabled, onChange, onToggleEnabled }) {
   );
 }
 
-function LevelCard({ name, onNameChange, overall, totalXP, today, mode, status, statusEnabled, onStatusChange, onToggleStatusEnabled }) {
+function LevelCard({ name, onNameChange, overall, totalXP, today, mode, status, statusEnabled, onStatusChange, onToggleStatusEnabled, compact = false }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name);
   const { rank, progress, bandFrom, bandTo, xp } = rankInfo(totalXP);
@@ -5648,8 +5683,31 @@ function LevelCard({ name, onNameChange, overall, totalXP, today, mode, status, 
 
   const dateStr = today.toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
 
+  // Fluid ring size tied to the card's actual rendered width (not the
+  // browser viewport — vw doesn't track a component's real width if it's
+  // sitting inside a max-width shell or a device preview frame, so on
+  // some screens it barely moved). ResizeObserver gives the true width,
+  // and the ring absorbs whatever space is left next to the progress
+  // column: bigger on wide devices, smaller on narrow ones.
+  const cardRef = useRef(null);
+  const [cardWidth, setCardWidth] = useState(360);
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect?.width;
+      if (w) setCardWidth(w);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const ringSize = compact
+    ? clamp(cardWidth * 0.14, 46, 56)
+    : clamp(cardWidth * 0.17, 60, 78);
+
   return (
     <div
+      ref={cardRef}
       className="mx-3 mb-1"
       style={{
         position: "relative",
@@ -5666,42 +5724,53 @@ function LevelCard({ name, onNameChange, overall, totalXP, today, mode, status, 
         <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: `linear-gradient(90deg, transparent, ${rc}, transparent)`, opacity: 0.7 }} />
         <div style={{ position: "absolute", top: -50, right: -40, width: 160, height: 160, borderRadius: "50%", background: `radial-gradient(circle, ${mix(rc, 20)}, transparent 72%)` }} />
       </div>
-      <div className="flex items-end gap-3" style={{ position: "relative", padding: 16 }}>
+      <div className="flex items-end gap-2" style={{ position: "relative", padding: compact ? 12 : 16, transition: "padding 0.3s ease" }}>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-            {editing ? (
-              <input
-                autoFocus
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onBlur={commit}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") commit();
-                  if (e.key === "Escape") { setDraft(name); setEditing(false); }
-                }}
-                placeholder="Your Name"
-                style={{
-                  fontFamily: sans, fontWeight: 900, fontSize: 16, color: C.onSurface,
-                  background: "transparent", border: "none", borderBottom: `1px solid ${C.outline}`,
-                  outline: "none", width: "100%", padding: "1px 0",
-                }}
+          {/* name + status row — animates to zero height instead of
+              unmounting, so the card visibly shrinks rather than jump-cuts */}
+          <div
+            style={{
+              maxHeight: compact ? 0 : 28,
+              opacity: compact ? 0 : 1,
+              overflow: "hidden",
+              transition: "max-height 0.3s ease, opacity 0.2s ease",
+            }}
+          >
+            <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+              {editing ? (
+                <input
+                  autoFocus
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onBlur={commit}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commit();
+                    if (e.key === "Escape") { setDraft(name); setEditing(false); }
+                  }}
+                  placeholder="Your Name"
+                  style={{
+                    fontFamily: sans, fontWeight: 900, fontSize: 16, color: C.onSurface,
+                    background: "transparent", border: "none", borderBottom: `1px solid ${C.outline}`,
+                    outline: "none", width: "100%", padding: "1px 0",
+                  }}
+                />
+              ) : (
+                <Touchable onClick={() => setEditing(true)} writeAction style={{ display: "inline-block", borderRadius: 8 }}>
+                  <span style={{ fontFamily: sans, fontWeight: 900, fontSize: 16, color: name ? C.onSurface : C.faint, letterSpacing: 0.3 }}>
+                    {(name || "Your Name").toUpperCase()}
+                  </span>
+                </Touchable>
+              )}
+              <StatusChip
+                status={status}
+                enabled={statusEnabled}
+                onChange={onStatusChange}
+                onToggleEnabled={onToggleStatusEnabled}
               />
-            ) : (
-              <Touchable onClick={() => setEditing(true)} writeAction style={{ display: "inline-block", borderRadius: 8 }}>
-                <span style={{ fontFamily: sans, fontWeight: 900, fontSize: 16, color: name ? C.onSurface : C.faint, letterSpacing: 0.3 }}>
-                  {(name || "Your Name").toUpperCase()}
-                </span>
-              </Touchable>
-            )}
-            <StatusChip
-              status={status}
-              enabled={statusEnabled}
-              onChange={onStatusChange}
-              onToggleEnabled={onToggleStatusEnabled}
-            />
+            </div>
           </div>
 
-          <div className="flex items-end gap-3" style={{ marginTop: 8 }}>
+          <div className="flex items-end gap-3" style={{ marginTop: compact ? 0 : 8, transition: "margin-top 0.3s ease" }}>
             <RankBadge
               rank={rank} color={rc} xp={xp} bandFrom={bandFrom} bandTo={bandTo} mode={mode}
             />
@@ -5719,11 +5788,23 @@ function LevelCard({ name, onNameChange, overall, totalXP, today, mode, status, 
             </div>
           </div>
         </div>
-        <div style={{ flexShrink: 0 }}>
-          <Ring value={overall} max={100} color={rc} size={72} stroke={5} glow>
+        {/* outer box controls the rendered footprint and transitions its
+            width/height; Ring itself renders `fluid` so its svg scales to
+            fill whatever size this box animates to, instead of jumping
+            between two fixed sizes. */}
+        <div style={{ flexShrink: 0, width: ringSize, height: ringSize, alignSelf: compact ? "center" : "flex-end", transition: "width 0.3s ease, height 0.3s ease, align-self 0.3s ease" }}>
+          <Ring value={overall} max={100} color={rc} size={72} stroke={5} glow fluid>
             <div className="flex flex-col items-center leading-none">
-              <span style={{ fontFamily: sans, fontSize: 19, fontWeight: 900, color: C.onSurface }}>{Math.round(overall)}</span>
-              <span style={{ fontFamily: mono, fontSize: 7.5, color: C.faint, letterSpacing: 0.5 }}>/ 100</span>
+              <span style={{ fontFamily: sans, fontSize: compact ? 13 : 19, fontWeight: 900, color: C.onSurface, transition: "font-size 0.3s ease" }}>{Math.round(overall)}</span>
+              <span
+                style={{
+                  fontFamily: mono, fontSize: 7.5, color: C.faint, letterSpacing: 0.5,
+                  maxHeight: compact ? 0 : 10, opacity: compact ? 0 : 1, overflow: "hidden",
+                  transition: "max-height 0.3s ease, opacity 0.2s ease",
+                }}
+              >
+                / 100
+              </span>
             </div>
           </Ring>
         </div>
@@ -6987,6 +7068,7 @@ export default function LifeRPG() {
             statusEnabled={state.profile?.statusEnabled !== false}
             onStatusChange={(v) => update((d) => { d.profile.status = v; })}
             onToggleStatusEnabled={(v) => update((d) => { d.profile.statusEnabled = v; })}
+            compact={tab !== "dashboard"}
           />
         </div>
 
@@ -7022,7 +7104,7 @@ export default function LifeRPG() {
           </div>
         )}
 
-        <QuestStrip today={today} />
+        <QuestStrip today={today} compact={tab !== "dashboard"} />
         <div className="px-4 pb-1 flex items-center justify-between" style={{ flexShrink: 0 }}>
           <span style={{ fontFamily: mono, color: C.faint, fontSize: 11 }}>Day {idx} / 91</span>
           <span style={{ fontFamily: mono, color: C.faint, fontSize: 11 }}>Week {currentWeek}</span>
