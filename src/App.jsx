@@ -1029,7 +1029,7 @@ function RestrictedTab({ label, Icon }) {
   );
 }
 
-function Mission({ title, points, earned, children, color, defaultOpen = false, rightLabel, locked = false, nested = false, emphasized = false }) {
+function Mission({ title, points, earned, children, color, defaultOpen = false, rightLabel, locked = false, nested = false, emphasized = false, bleed = false, noAccent = false }) {
   const [open, setOpen] = useState(locked ? false : defaultOpen);
   const radius = emphasized ? 8 : 10;
   return (
@@ -1042,10 +1042,10 @@ function Mission({ title, points, earned, children, color, defaultOpen = false, 
           : "transparent",
         boxShadow: emphasized ? `0 0 16px ${mix(color, 35)}` : "none",
       }}
-      className={nested ? "mb-3" : "mx-4 mb-3"}
+      className={nested ? (bleed ? "mb-3 -mx-4" : "mb-3") : "mx-4 mb-3"}
     >
       <div style={{ position: "relative", background: C.container, borderRadius: radius }} className="overflow-hidden">
-        {!emphasized && (
+        {!emphasized && !noAccent && (
           <div
             style={{
               position: "absolute", left: 0, top: "22%", bottom: "22%", width: 3, borderRadius: 3,
@@ -1501,7 +1501,7 @@ function WorkoutCard({ s, set, locked }) {
             <p style={{ color: C.faint, fontSize: 12.5, margin: 0 }}>No workouts yet — create one below.</p>
           )}
           {gym.schedules.map((sch) => <ScheduleCard key={sch.id} schedule={sch} gym={gym} update={update} />)}
-          <CreateScheduleCard update={update} />
+          <CreateScheduleCard update={update} gym={gym} />
         </div>
       )}
 
@@ -1549,6 +1549,11 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
       d.logs[viewDate] = { muscles: slot.muscles, skipped: true, skipReason: reason, exercises: [], extras: [] };
       d.catchups.push({ id: uid(), originalDate: viewDate, muscles: slot.muscles, exercises: buildLogExercises(slot.exercises), done: false, completedDate: null });
     });
+    setSkipping(false);
+  };
+
+  const resetDay = () => {
+    update((d) => { delete d.logs[viewDate]; });
     setSkipping(false);
   };
 
@@ -1673,8 +1678,9 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
             </div>
           )}
           {isToday && plannedDay?.exercises.length > 0 && (
-            <Touchable writeAction onClick={() => setSkipping(true)} style={{ marginTop: 10, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 12.5 }}>Skip this workout instead</span>
+            <Touchable writeAction onClick={resetDay} style={{ marginTop: 10, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              <RotateCcw size={13} color={C.onSurfaceVariant} />
+              <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 12.5 }}>Reset</span>
             </Touchable>
           )}
         </div>
@@ -1900,6 +1906,16 @@ function ScheduleCard({ schedule, gym, update }) {
   const removeExerciseFromDay = (idx) => {
     update((d) => { const sch = d.schedules.find((sc) => sc.id === schedule.id); if (sch) sch.days[dayTab].exercises.splice(idx, 1); });
   };
+  const moveExercise = (idx, dir) => {
+    update((d) => {
+      const sch = d.schedules.find((sc) => sc.id === schedule.id);
+      if (!sch) return;
+      const arr = sch.days[dayTab].exercises;
+      const j = idx + dir;
+      if (j < 0 || j >= arr.length) return;
+      [arr[idx], arr[j]] = [arr[j], arr[idx]];
+    });
+  };
   const updateTarget = (idx, field, value) => {
     update((d) => { const sch = d.schedules.find((sc) => sc.id === schedule.id); if (sch) sch.days[dayTab].exercises[idx][field] = value; });
   };
@@ -1926,7 +1942,7 @@ function ScheduleCard({ schedule, gym, update }) {
   );
 
   return (
-    <Mission title={title} color={C.accent} nested>
+    <Mission title={title} color={C.accent} nested bleed noAccent>
       {!schedule.active && (
         <Touchable writeAction onClick={setActive} style={{ marginBottom: 12, borderRadius: 10, padding: "8px 0", border: `1px solid ${mix(C.accent, 40)}`, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
           <Star size={13} color={C.accent} />
@@ -1992,6 +2008,14 @@ function ScheduleCard({ schedule, gym, update }) {
               <div key={idx} style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 10, padding: "8px 12px" }} className="flex flex-col gap-2">
                 <div className="flex items-center gap-2">
                   <span style={{ color: C.onSurface, fontFamily: sans, fontSize: 13, flex: 1, minWidth: 0 }}>{exerciseName(e.exerciseId)}</span>
+                  <div className="flex flex-col" style={{ flexShrink: 0 }}>
+                    <Touchable writeAction onClick={() => moveExercise(idx, -1)} disabled={idx === 0} style={{ padding: 1, opacity: idx === 0 ? 0.3 : 1 }}>
+                      <ChevronUp size={13} color={C.faint} />
+                    </Touchable>
+                    <Touchable writeAction onClick={() => moveExercise(idx, 1)} disabled={idx === daySlot.exercises.length - 1} style={{ padding: 1, opacity: idx === daySlot.exercises.length - 1 ? 0.3 : 1 }}>
+                      <ChevronDown size={13} color={C.faint} />
+                    </Touchable>
+                  </div>
                   <Touchable writeAction onClick={() => removeExerciseFromDay(idx)} style={{ padding: 4, flexShrink: 0 }}>
                     <Trash2 size={13} color={C.faint} />
                   </Touchable>
@@ -2152,18 +2176,23 @@ function AddExerciseForm({ schedule, dayKey, gym, update, onDone }) {
   );
 }
 
-function CreateScheduleCard({ update }) {
+function CreateScheduleCard({ update, gym }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
+  const [copyFromId, setCopyFromId] = useState("");
 
   const create = () => {
     const trimmed = name.trim();
     if (!trimmed) return;
     update((d) => {
-      const makeEmptyDays = () => Object.fromEntries(DAY_KEYS.map((k) => [k, { muscles: ["Rest"], exercises: [] }]));
-      d.schedules.push({ id: uid(), name: trimmed, active: d.schedules.length === 0, days: makeEmptyDays() });
+      const source = copyFromId ? d.schedules.find((sc) => sc.id === copyFromId) : null;
+      const days = source
+        ? JSON.parse(JSON.stringify(source.days))
+        : Object.fromEntries(DAY_KEYS.map((k) => [k, { muscles: ["Rest"], exercises: [] }]));
+      d.schedules.push({ id: uid(), name: trimmed, active: d.schedules.length === 0, days });
     });
     setName("");
+    setCopyFromId("");
     setAdding(false);
   };
 
@@ -2177,8 +2206,16 @@ function CreateScheduleCard({ update }) {
       ) : (
         <div className="flex flex-col gap-2">
           <input type="text" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Workout name (e.g. Push Pull Legs)" style={gymInputStyle} />
+          {gym.schedules.length > 0 && (
+            <select value={copyFromId} onChange={(e) => setCopyFromId(e.target.value)} style={gymSelectStyle}>
+              <option value="">Start blank</option>
+              {gym.schedules.map((sc) => (
+                <option key={sc.id} value={sc.id}>Copy from "{sc.name}"</option>
+              ))}
+            </select>
+          )}
           <div className="flex items-center gap-2">
-            <Touchable onClick={() => { setAdding(false); setName(""); }} style={{ flex: 1, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Touchable onClick={() => { setAdding(false); setName(""); setCopyFromId(""); }} style={{ flex: 1, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Cancel</span>
             </Touchable>
             <Touchable writeAction onClick={create} style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
@@ -2369,19 +2406,32 @@ function VitalityOverviewTiles({ s, eff }) {
   const subStyle = { fontFamily: mono, fontSize: 10.5, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
 
   return (
-    <div className="px-4 mb-3" style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 8 }}>
-      <div style={tileStyle}>
-        <div style={labelStyle}>TODAY</div>
-        <div style={valueStyle}>{todayMuscle}</div>
-        <div style={{ ...subStyle, color: activeSchedule ? C.accent : C.faint }}>{activeSchedule ? activeSchedule.name : "No active workout"}</div>
+    <div className="pl-4 pr-2 mb-3" style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 8 }}>
+      <div
+        style={{
+          position: "relative", overflow: "hidden", borderRadius: 12, padding: "10px 12px", minWidth: 0,
+          background: `linear-gradient(150deg, ${mix(C.accent, 72)}, ${mix(C.accent, 44)})`,
+          border: `1px solid ${mix(C.accent, 80)}`,
+          boxShadow: `0 4px 18px ${mix(C.accent, 44)}`,
+        }}
+      >
+        <div style={{ ...labelStyle, color: mix("#fff", 75) }}>TODAY</div>
+        <div style={{ ...valueStyle, color: "#fff" }}>{todayMuscle}</div>
+        <div style={{ ...subStyle, color: activeSchedule ? "#fff" : mix("#fff", 65) }}>{activeSchedule ? activeSchedule.name : "No active workout"}</div>
       </div>
-      <div style={tileStyle}>
-        <div style={labelStyle}>TREKS</div>
-        <div style={{ ...valueStyle, color: C.vitality }}>{eff.treks}/9</div>
+      <div style={{ ...tileStyle, marginRight: -4, border: `1px solid ${mix(C.accent, 55)}` }}>
+        <div style={{ ...labelStyle, color: C.accent }}>PROGRESS</div>
+        <TrendingUp size={18} color={C.accent} style={{ marginTop: 5 }} />
       </div>
-      <div style={{ ...tileStyle, opacity: 0.55 }}>
-        <div style={labelStyle}>PROGRESS</div>
-        <div style={valueStyle}>—</div>
+      <div className="flex items-center justify-center" style={{ minWidth: 0, marginLeft: -4, marginRight: -4 }}>
+        <Ring value={eff.treks} max={9} color={C.vitality} size={84} stroke={6}>
+          <div className="flex flex-col items-center" style={{ gap: 1 }}>
+            <span style={{ fontFamily: mono, fontSize: 15, fontWeight: 700, color: C.onSurface, lineHeight: 1 }}>
+              {eff.treks}<span style={{ fontSize: 9, fontWeight: 600, opacity: 0.65 }}>/9</span>
+            </span>
+            <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 8, color: C.faint, letterSpacing: 0.5 }}>TREKS</span>
+          </div>
+        </Ring>
       </div>
     </div>
   );
