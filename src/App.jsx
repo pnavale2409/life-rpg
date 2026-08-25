@@ -1554,6 +1554,13 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
     setSkipping(false);
   };
 
+  const resetDay = () => {
+    update((d) => {
+      delete d.logs[viewDate];
+    });
+    setSkipping(false);
+  };
+
   const confirmSkip = (reason) => {
     update((d) => {
       const sch = d.schedules.find((sc) => sc.active);
@@ -1685,9 +1692,10 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
               ))}
             </div>
           )}
-          {isToday && plannedDay?.exercises.length > 0 && (
-            <Touchable writeAction onClick={() => setSkipping(true)} style={{ marginTop: 10, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 12.5 }}>Skip this workout instead</span>
+          {plannedDay?.exercises.length > 0 && (
+            <Touchable writeAction onClick={resetDay} style={{ marginTop: 10, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              <RotateCcw size={13} color={C.onSurfaceVariant} />
+              <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 12.5 }}>Reset</span>
             </Touchable>
           )}
         </div>
@@ -2428,18 +2436,18 @@ function VitalityOverviewTiles({ s, eff, onOpenProgress }) {
       </div>
       <Touchable
         onClick={onOpenProgress}
-        style={{ ...tileStyle, marginRight: -4, border: `1px solid ${mix(C.accent, 55)}`, display: "block" }}
+        style={{ ...tileStyle, border: `1px solid ${mix(C.accent, 55)}`, display: "block" }}
       >
         <div style={{ ...labelStyle, color: C.accent }}>PROGRESS</div>
         <TrendingUp size={18} color={C.accent} style={{ marginTop: 5 }} />
       </Touchable>
-      <div className="flex items-center justify-center" style={{ minWidth: 0, marginLeft: -4, marginRight: -4, containerType: "inline-size" }}>
-        <Ring value={eff.treks} max={9} color={C.vitality} size={84} stroke={6} fluid>
+      <div className="flex items-center justify-center" style={{ minWidth: 0, containerType: "inline-size" }}>
+        <Ring value={eff.treks} max={9} color={C.vitality} size={68} stroke={5} fluid>
           <div className="flex flex-col items-center" style={{ gap: 1 }}>
-            <span style={{ fontFamily: mono, fontSize: "clamp(11px, 19cqw, 15px)", fontWeight: 700, color: C.onSurface, lineHeight: 1 }}>
+            <span style={{ fontFamily: mono, fontSize: "clamp(10px, 19cqw, 13px)", fontWeight: 700, color: C.onSurface, lineHeight: 1 }}>
               {eff.treks}<span style={{ fontSize: "0.6em", fontWeight: 600, opacity: 0.65 }}>/9</span>
             </span>
-            <span style={{ fontFamily: sans, fontWeight: 700, fontSize: "clamp(6px, 10cqw, 8px)", color: C.faint, letterSpacing: 0.5 }}>TREKS</span>
+            <span style={{ fontFamily: sans, fontWeight: 700, fontSize: "clamp(5px, 10cqw, 7px)", color: C.faint, letterSpacing: 0.5 }}>TREKS</span>
           </div>
         </Ring>
       </div>
