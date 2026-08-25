@@ -779,13 +779,23 @@ function Touchable({ children, onClick, style, className, disabled, rippleColor,
 /* ---------------------------------------------------------------
    SMALL UI PRIMITIVES
 --------------------------------------------------------------- */
-function Ring({ value, max, color, size = 52, stroke = 5, children, glow = false }) {
+/* `fluid` makes the ring fill its container's width (up to `size` as
+   a cap) instead of always rendering at a fixed pixel size — use it
+   wherever the ring sits inside a column/tile that can be narrower
+   than `size` on small phones (e.g. a grid column), so the ring
+   shrinks to fit instead of overflowing. Geometry is drawn in a
+   viewBox matching `size`, so the stroke scales down proportionally
+   too rather than looking chunky on a shrunk ring. */
+function Ring({ value, max, color, size = 52, stroke = 5, children, glow = false, fluid = false }) {
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const pct = clamp(value / max, 0, 1);
+  const boxStyle = fluid
+    ? { width: "100%", maxWidth: size, aspectRatio: "1 / 1" }
+    : { width: size, height: size };
   return (
-    <div style={{ position: "relative", width: size, height: size, flexShrink: 0, filter: glow ? `drop-shadow(0 0 6px ${color})` : "none" }}>
-      <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+    <div style={{ position: "relative", ...boxStyle, flexShrink: 0, filter: glow ? `drop-shadow(0 0 6px ${color})` : "none" }}>
+      <svg viewBox={`0 0 ${size} ${size}`} style={{ width: "100%", height: "100%", display: "block", transform: "rotate(-90deg)" }}>
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={C.outlineVariant} strokeWidth={stroke} />
         <circle
           cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={stroke}
@@ -2423,13 +2433,13 @@ function VitalityOverviewTiles({ s, eff, onOpenProgress }) {
         <div style={{ ...labelStyle, color: C.accent }}>PROGRESS</div>
         <TrendingUp size={18} color={C.accent} style={{ marginTop: 5 }} />
       </Touchable>
-      <div className="flex items-center justify-center" style={{ minWidth: 0, marginLeft: -4, marginRight: -4 }}>
-        <Ring value={eff.treks} max={9} color={C.vitality} size={84} stroke={6}>
+      <div className="flex items-center justify-center" style={{ minWidth: 0, marginLeft: -4, marginRight: -4, containerType: "inline-size" }}>
+        <Ring value={eff.treks} max={9} color={C.vitality} size={84} stroke={6} fluid>
           <div className="flex flex-col items-center" style={{ gap: 1 }}>
-            <span style={{ fontFamily: mono, fontSize: 15, fontWeight: 700, color: C.onSurface, lineHeight: 1 }}>
-              {eff.treks}<span style={{ fontSize: 9, fontWeight: 600, opacity: 0.65 }}>/9</span>
+            <span style={{ fontFamily: mono, fontSize: "clamp(11px, 19cqw, 15px)", fontWeight: 700, color: C.onSurface, lineHeight: 1 }}>
+              {eff.treks}<span style={{ fontSize: "0.6em", fontWeight: 600, opacity: 0.65 }}>/9</span>
             </span>
-            <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 8, color: C.faint, letterSpacing: 0.5 }}>TREKS</span>
+            <span style={{ fontFamily: sans, fontWeight: 700, fontSize: "clamp(6px, 10cqw, 8px)", color: C.faint, letterSpacing: 0.5 }}>TREKS</span>
           </div>
         </Ring>
       </div>
@@ -2765,10 +2775,7 @@ function ProgressTab({ gym }) {
         <Diamond size={7} color={C.accent} glow />
         <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 22, letterSpacing: 0.3 }}>PROGRESS</div>
       </div>
-      <p style={{ color: C.onSurfaceVariant, fontSize: 12.5, margin: "0 20px 14px 35px" }}>
-        Per-exercise trends from your logged workouts.
-      </p>
-      <div className="px-4">
+      <div className="px-4" style={{ marginTop: 10 }}>
         <div className="flex gap-1" style={{ marginBottom: 16, background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 12, padding: 4, overflowX: "auto" }}>
           {PROGRESS_TABS.map((t) => (
             <Touchable
