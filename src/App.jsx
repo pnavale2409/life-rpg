@@ -3,13 +3,16 @@ import { createPortal } from "react-dom";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { db, QUESTS_COLLECTION } from "./firebase.js";
 import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+} from "recharts";
+import {
   BookOpen, Dumbbell, Coins, ShieldCheck, ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
   Mountain, Check, Minus, Plus, Save, Trophy, Crown, Lock, RotateCcw, Home, MoreVertical,
   CheckCircle2, CloudOff, Loader2, KeyRound, Copy, Sun, Moon, Sparkles, Calendar, Trash2,
   Utensils, ListTodo, ArrowRightToLine, Pencil, Users, UserPlus, History,
   Briefcase, Plane, Tag, EyeOff, Eye,
   Rocket, TrendingUp, Building2, Shuffle, Gem, Globe,
-  Star, X, CalendarDays,
+  Star, X, CalendarDays, Weight, Repeat, Timer, Award,
 } from "lucide-react";
 
 const SYNC_ENABLED = true;
@@ -1552,11 +1555,6 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
     setSkipping(false);
   };
 
-  const resetDay = () => {
-    update((d) => { delete d.logs[viewDate]; });
-    setSkipping(false);
-  };
-
   const setSetField = (exerciseId, setIndex, field, value) => {
     update((d) => {
       const ex = d.logs[viewDate]?.exercises.find((e) => e.exerciseId === exerciseId);
@@ -1678,9 +1676,8 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
             </div>
           )}
           {isToday && plannedDay?.exercises.length > 0 && (
-            <Touchable writeAction onClick={resetDay} style={{ marginTop: 10, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-              <RotateCcw size={13} color={C.onSurfaceVariant} />
-              <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 12.5 }}>Reset</span>
+            <Touchable writeAction onClick={() => setSkipping(true)} style={{ marginTop: 10, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 12.5 }}>Skip this workout instead</span>
             </Touchable>
           )}
         </div>
@@ -2389,9 +2386,9 @@ function ExerciseDatabaseCard({ gym, update }) {
 
 
 /* Three at-a-glance tiles sitting above the Vitality mission cards —
-   Today (half width), Treks (quarter), Progress (quarter, placeholder
-   for now — not clickable, no metric decided yet). */
-function VitalityOverviewTiles({ s, eff }) {
+   Today (half width), Progress (quarter, opens the Progress screen),
+   Treks (quarter). */
+function VitalityOverviewTiles({ s, eff, onOpenProgress }) {
   const gym = s.gym;
   const activeSchedule = gym.schedules.find((sc) => sc.active) || null;
   const today = fmtDate(new Date());
@@ -2419,10 +2416,13 @@ function VitalityOverviewTiles({ s, eff }) {
         <div style={{ ...valueStyle, color: "#fff" }}>{todayMuscle}</div>
         <div style={{ ...subStyle, color: activeSchedule ? "#fff" : mix("#fff", 65) }}>{activeSchedule ? activeSchedule.name : "No active workout"}</div>
       </div>
-      <div style={{ ...tileStyle, marginRight: -4, border: `1px solid ${mix(C.accent, 55)}` }}>
+      <Touchable
+        onClick={onOpenProgress}
+        style={{ ...tileStyle, marginRight: -4, border: `1px solid ${mix(C.accent, 55)}`, display: "block" }}
+      >
         <div style={{ ...labelStyle, color: C.accent }}>PROGRESS</div>
         <TrendingUp size={18} color={C.accent} style={{ marginTop: 5 }} />
-      </div>
+      </Touchable>
       <div className="flex items-center justify-center" style={{ minWidth: 0, marginLeft: -4, marginRight: -4 }}>
         <Ring value={eff.treks} max={9} color={C.vitality} size={84} stroke={6}>
           <div className="flex flex-col items-center" style={{ gap: 1 }}>
@@ -2437,7 +2437,7 @@ function VitalityOverviewTiles({ s, eff }) {
   );
 }
 
-function VitalityTab({ s, effective, set, locked }) {
+function VitalityTab({ s, effective, set, locked, onOpenProgress }) {
   const eff = effective || s;
   const score = vitalityScore(eff);
   const missedDates = eff.mtMissedDates || [];
@@ -2446,7 +2446,7 @@ function VitalityTab({ s, effective, set, locked }) {
   return (
     <div className="pb-4">
       <ScreenHeader title="Vitality" sub="Physical strength, endurance and health." color={C.vitality} score={score} />
-      <VitalityOverviewTiles s={s} eff={eff} />
+      <VitalityOverviewTiles s={s} eff={eff} onOpenProgress={onOpenProgress} />
       <LockWrap locked={locked} color={C.vitality}>
         <WorkoutCard s={s} set={set} locked={locked} />
         <Mission title="Muay Thai" points={65} earned={Object.values(eff.muayThai).filter(Boolean).length} color={C.vitality}>
@@ -2487,6 +2487,311 @@ function VitalityTab({ s, effective, set, locked }) {
           </div>
         </Mission>
       </LockWrap>
+    </div>
+  );
+}
+
+/* =================================================================
+   PROGRESS — opened from the PROGRESS tile on the Vitality tab.
+   Reads straight off gym.logs (+ completed gym.catchups), grouped
+   per exercise rather than as one blended total, so re-shaping a
+   schedule never breaks the history of exercises you keep doing.
+================================================================= */
+
+/* Monday of the week containing dateStr, as a fmtDate() string —
+   used to bucket daily points into weekly-max points. */
+function weekStartDate(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  const day = d.getDay(); // 0 Sun..6 Sat
+  const diff = day === 0 ? 6 : day - 1; // days since Monday
+  d.setDate(d.getDate() - diff);
+  return fmtDate(d);
+}
+function fmtDayMonthNum(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  return `${d.getDate()}/${d.getMonth() + 1}`;
+}
+
+/* One point per day the exercise was actually logged with at least
+   one completed set — weight/reps/volume for weight exercises, time
+   (minutes) for timed ones. Pulls from both dated logs and completed
+   catch-ups (keyed by completedDate). */
+function buildExercisePoints(gym, exerciseId, isTimed) {
+  const points = [];
+  const consume = (date, exList) => {
+    const ex = (exList || []).find((e) => e.exerciseId === exerciseId);
+    if (!ex) return;
+    const done = ex.sets.filter((s) => s.completed);
+    if (done.length === 0) return;
+    if (isTimed) {
+      points.push({ date, time: Math.max(...done.map((s) => s.reps || 0)) });
+    } else {
+      points.push({
+        date,
+        weight: Math.max(...done.map((s) => s.weight || 0)),
+        reps: Math.max(...done.map((s) => s.reps || 0)),
+        volume: done.reduce((sum, s) => sum + (s.weight || 0) * (s.reps || 0), 0),
+      });
+    }
+  };
+  Object.entries(gym.logs || {}).forEach(([date, log]) => consume(date, log?.exercises));
+  (gym.catchups || []).forEach((c) => { if (c.done && c.completedDate) consume(c.completedDate, c.exercises); });
+  points.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return points;
+}
+/* Collapses daily points into one max-value point per week. */
+function toWeeklyMax(points, field) {
+  const byWeek = new Map();
+  points.forEach((p) => {
+    const v = p[field];
+    if (v == null) return;
+    const wk = weekStartDate(p.date);
+    if (!byWeek.has(wk) || byWeek.get(wk) < v) byWeek.set(wk, v);
+  });
+  return [...byWeek.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1));
+}
+/* All PRs (new maxes) ever hit per weight exercise, most recent first,
+   skipping each exercise's very first logged weight (nothing to beat
+   yet, so it isn't a "record"). */
+function detectPRs(gym) {
+  const prs = [];
+  (gym.exercises || []).filter((e) => !e.isTimed).forEach((ex) => {
+    let best = 0;
+    buildExercisePoints(gym, ex.id, false).forEach((p) => {
+      if (p.weight > best) {
+        if (best > 0) prs.push({ exercise: ex.name, weight: p.weight, prev: best, date: p.date });
+        best = p.weight;
+      }
+    });
+  });
+  return prs.sort((a, b) => (a.date < b.date ? 1 : -1));
+}
+
+function SectionLabel({ children }) {
+  return (
+    <div style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 700, fontSize: 11.5, letterSpacing: 0.3, marginBottom: 10 }}>
+      {children}
+    </div>
+  );
+}
+
+function ProgressTooltip({ active, payload, label, unit }) {
+  if (!active || !payload || !payload.length) return null;
+  return (
+    <div style={{ background: C.containerHighest, border: `1px solid ${C.outline}`, borderRadius: 8, padding: "6px 10px" }}>
+      <div style={{ color: C.faint, fontFamily: mono, fontSize: 10 }}>{fmtDayMonthNum(label)}</div>
+      <div style={{ color: C.onSurface, fontFamily: mono, fontSize: 13, fontWeight: 700 }}>{payload[0].value}{unit}</div>
+    </div>
+  );
+}
+
+function ProgressChartCard({ title, points, field, color, unit }) {
+  if (points.length === 0) {
+    return (
+      <div style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 16, padding: "16px", marginBottom: 12, textAlign: "center" }}>
+        <p style={{ color: C.faint, fontSize: 12, margin: 0 }}>No sessions logged yet for this exercise.</p>
+      </div>
+    );
+  }
+  const chartData = points.map((p) => Array.isArray(p) ? { date: p[0], value: p[1] } : { date: p.date, value: p[field] });
+  const last = chartData[chartData.length - 1].value;
+  const first = chartData[0].value;
+  const delta = Math.round((last - first) * 10) / 10;
+
+  return (
+    <div style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 16, padding: "14px 12px 8px", marginBottom: 12 }}>
+      <div className="flex items-center justify-between" style={{ padding: "0 8px 10px" }}>
+        <div>
+          <div style={{ color: C.faint, fontFamily: sans, fontWeight: 700, fontSize: 10.5, letterSpacing: 0.3 }}>{title}</div>
+          <div style={{ color: C.onSurface, fontFamily: mono, fontSize: 19, fontWeight: 700, marginTop: 2 }}>
+            {last}<span style={{ fontSize: 11, color: C.faint, fontWeight: 500 }}>{unit}</span>
+          </div>
+        </div>
+        {delta !== 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 5, background: mix(color, 16), border: `1px solid ${mix(color, 40)}`, borderRadius: 10, padding: "5px 9px" }}>
+            <TrendingUp size={12} color={color} />
+            <span style={{ color, fontFamily: mono, fontSize: 11.5, fontWeight: 700 }}>{delta > 0 ? "+" : ""}{delta}{unit}</span>
+          </div>
+        )}
+      </div>
+      <ResponsiveContainer width="100%" height={160}>
+        <LineChart data={chartData} margin={{ top: 4, right: 12, left: -18, bottom: 0 }}>
+          <CartesianGrid stroke={C.outlineVariant} vertical={false} />
+          <XAxis dataKey="date" stroke={C.faint} tick={{ fill: C.faint, fontFamily: mono, fontSize: 10 }} axisLine={{ stroke: C.outlineVariant }} tickLine={false} tickFormatter={fmtDayMonthNum} />
+          <YAxis stroke={C.faint} tick={{ fill: C.faint, fontFamily: mono, fontSize: 10 }} axisLine={false} tickLine={false} domain={["dataMin - 2", "dataMax + 2"]} />
+          <Tooltip content={<ProgressTooltip unit={unit} />} cursor={{ stroke: C.outline }} />
+          <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2.5} dot={{ r: 3.5, fill: color, strokeWidth: 0 }} activeDot={{ r: 5 }} />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/* options: array of { value, label } */
+function ProgressFilterSelect({ value, onChange, options, color }) {
+  return (
+    <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          width: "100%", appearance: "none", background: C.container,
+          border: `1px solid ${mix(color, 45)}`, color: C.onSurface,
+          borderRadius: 12, padding: "11px 30px 11px 14px",
+          fontFamily: sans, fontWeight: 600, fontSize: 13, cursor: "pointer", outline: "none",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value} style={{ background: C.container, color: C.onSurface }}>{o.label}</option>
+        ))}
+      </select>
+      <ChevronDown size={14} color={color} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+    </div>
+  );
+}
+
+/* One metric (Weight / Volume / Reps / Time) — a muscle filter, an
+   exercise filter narrowed to that muscle, then a daily chart (last
+   10 logged sessions) and a weekly-max chart for whichever exercise
+   is selected. */
+function ProgressMetricSection({ label, field, unit, color, gym, isTimed }) {
+  const pool = (gym.exercises || []).filter((e) => !!e.isTimed === isTimed);
+
+  if (pool.length === 0) {
+    return (
+      <div>
+        <SectionLabel>{label} per exercise</SectionLabel>
+        <p style={{ color: C.faint, fontSize: 12.5, margin: 0 }}>
+          {isTimed ? "No timed exercises yet — add one in the Exercises tab." : "No exercises yet — add one in the Exercises tab."}
+        </p>
+      </div>
+    );
+  }
+
+  const muscles = [...new Set(pool.map((e) => e.muscle))];
+  const [muscle, setMuscle] = useState("All muscles");
+  const filteredPool = muscle === "All muscles" ? pool : pool.filter((e) => e.muscle === muscle);
+  const [activeId, setActiveId] = useState(pool[0].id);
+
+  const handleMuscleChange = (m) => {
+    setMuscle(m);
+    const stillValid = m === "All muscles" ? pool : pool.filter((e) => e.muscle === m);
+    if (!stillValid.find((e) => e.id === activeId)) setActiveId(stillValid[0]?.id);
+  };
+
+  const activeExercise = pool.find((e) => e.id === activeId) || filteredPool[0];
+  const points = activeExercise ? buildExercisePoints(gym, activeExercise.id, isTimed) : [];
+  const dailyLast10 = points.slice(-10);
+  const weekly = toWeeklyMax(points, field);
+
+  return (
+    <div>
+      <SectionLabel>{label} per exercise</SectionLabel>
+      <div className="flex gap-2" style={{ marginBottom: 14 }}>
+        <ProgressFilterSelect
+          value={muscle}
+          onChange={handleMuscleChange}
+          options={["All muscles", ...muscles].map((m) => ({ value: m, label: m }))}
+          color={color}
+        />
+        <ProgressFilterSelect
+          value={activeExercise?.id || ""}
+          onChange={setActiveId}
+          options={filteredPool.map((e) => ({ value: e.id, label: e.name }))}
+          color={color}
+        />
+      </div>
+      {activeExercise ? (
+        <>
+          <ProgressChartCard title={`DAILY · last ${dailyLast10.length} sessions`} points={dailyLast10} field={field} color={color} unit={unit} />
+          <ProgressChartCard title="WEEKLY MAX" points={weekly} field={field} color={color} unit={unit} />
+        </>
+      ) : (
+        <p style={{ color: C.faint, fontSize: 12.5 }}>No exercise matches that muscle yet.</p>
+      )}
+    </div>
+  );
+}
+
+function ProgressPRsView({ gym }) {
+  const prs = detectPRs(gym).slice(0, 15);
+  if (prs.length === 0) {
+    return (
+      <div>
+        <SectionLabel>Personal records — auto-detected from your logs</SectionLabel>
+        <p style={{ color: C.faint, fontSize: 12.5, margin: 0 }}>No PRs yet — beat a previous top set to see it here.</p>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <SectionLabel>Personal records — auto-detected from your logs</SectionLabel>
+      <div className="flex flex-col gap-2">
+        {prs.map((pr, i) => (
+          <div key={i} style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 14, padding: "12px 14px", display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: mix(C.vitality, 18), border: `1px solid ${mix(C.vitality, 45)}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Award size={17} color={C.vitality} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ color: C.onSurface, fontFamily: sans, fontWeight: 600, fontSize: 13.5 }}>{pr.exercise}</div>
+              <div style={{ color: C.faint, fontFamily: mono, fontSize: 10.5 }}>{fmtDayMonthNum(pr.date)} · was {pr.prev}kg</div>
+            </div>
+            <div style={{ textAlign: "right", flexShrink: 0 }}>
+              <div style={{ color: C.vitality, fontFamily: mono, fontWeight: 700, fontSize: 15 }}>{pr.weight}kg</div>
+              <div style={{ color: C.vitality, fontFamily: mono, fontSize: 10.5 }}>+{(pr.weight - pr.prev).toFixed(1)}kg</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const PROGRESS_TABS = [
+  { id: "weight", label: "Weight", color: C.accent },
+  { id: "volume", label: "Volume", color: C.wisdom },
+  { id: "reps", label: "Reps", color: C.wealth },
+  { id: "time", label: "Time", color: C.resolve },
+  { id: "prs", label: "PRs", color: C.vitality },
+];
+
+function ProgressTab({ gym }) {
+  const [tab, setTab] = useState("weight");
+  const activeTab = PROGRESS_TABS.find((t) => t.id === tab);
+  return (
+    <div className="pb-4">
+      <div className="px-4 pt-5 pb-2 flex items-center gap-2">
+        <Diamond size={7} color={C.accent} glow />
+        <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 22, letterSpacing: 0.3 }}>PROGRESS</div>
+      </div>
+      <p style={{ color: C.onSurfaceVariant, fontSize: 12.5, margin: "0 20px 14px 35px" }}>
+        Per-exercise trends from your logged workouts.
+      </p>
+      <div className="px-4">
+        <div className="flex gap-1" style={{ marginBottom: 16, background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 12, padding: 4, overflowX: "auto" }}>
+          {PROGRESS_TABS.map((t) => (
+            <Touchable
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              style={{
+                flex: "1 0 auto", background: tab === t.id ? t.color : "transparent",
+                borderRadius: 9, padding: "8px 6px", display: "block", textAlign: "center",
+              }}
+            >
+              <span style={{ color: tab === t.id ? C.surface : C.onSurfaceVariant, fontFamily: sans, fontWeight: 700, fontSize: 11.5, whiteSpace: "nowrap" }}>
+                {t.label}
+              </span>
+            </Touchable>
+          ))}
+        </div>
+
+        {tab === "weight" && <ProgressMetricSection label="Max weight" field="weight" unit="kg" color={activeTab.color} gym={gym} isTimed={false} />}
+        {tab === "volume" && <ProgressMetricSection label="Volume" field="volume" unit="kg" color={activeTab.color} gym={gym} isTimed={false} />}
+        {tab === "reps" && <ProgressMetricSection label="Max reps" field="reps" unit="" color={activeTab.color} gym={gym} isTimed={false} />}
+        {tab === "time" && <ProgressMetricSection label="Duration" field="time" unit="min" color={activeTab.color} gym={gym} isTimed={true} />}
+        {tab === "prs" && <ProgressPRsView gym={gym} />}
+      </div>
     </div>
   );
 }
@@ -6758,7 +7063,8 @@ export default function LifeRPG() {
             </div>
           )}
           {tab === "wisdom" && <WisdomTab s={state.wisdom} set={update} />}
-          {tab === "vitality" && <VitalityTab s={state.vitality} effective={effVitality} set={update} locked={questLocked} />}
+          {tab === "vitality" && <VitalityTab s={state.vitality} effective={effVitality} set={update} locked={questLocked} onOpenProgress={() => setTab("progress")} />}
+          {tab === "progress" && <ProgressTab gym={state.vitality.gym} />}
           {tab === "wealth" && <WealthTab s={state.wealth} set={update} locked={questLocked} />}
           {tab === "resolve" && <ResolveTab s={state.resolve} effective={effResolve} set={update} locked={questLocked} wealth={state.wealth} />}
           {tab === "achievements" && <AchievementsTab state={achieveState} overall={overall} />}
@@ -6799,7 +7105,7 @@ export default function LifeRPG() {
         </div>
 
         <QuoteSheet open={quoteOpen} onClose={() => setQuoteOpen(false)} today={today} rankColor={rankTint} prevRankColor={prevRankTint} starPalette={starPalette} />
-        <BottomNav tab={tab} setTab={setTab} tabs={tabs.filter((t) => t.id !== "achievements" && t.id !== "diet" && t.id !== "planner" && t.id !== "calendar")} />
+        <BottomNav tab={tab} setTab={setTab} tabs={tabs.filter((t) => t.id !== "achievements" && t.id !== "diet" && t.id !== "planner" && t.id !== "calendar" && t.id !== "progress")} />
       </div>
     </div>
     </ReadOnlyContext.Provider>
