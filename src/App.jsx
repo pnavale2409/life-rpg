@@ -2477,7 +2477,7 @@ function VitalityOverviewTiles({ s, eff, onOpenProgress }) {
         <TrendingUp size={18} color={C.accent} style={{ marginTop: 5 }} />
       </Touchable>
       <div className="flex items-center justify-center" style={{ minWidth: 0, containerType: "inline-size" }}>
-        <Ring value={eff.treks} max={9} color={C.vitality} size={84} stroke={5} fillHeight>
+        <Ring value={eff.treks} max={9} color={C.vitality} size={17} stroke={2} fillHeight>
           <div className="flex flex-col items-center" style={{ gap: 1 }}>
             <span style={{ fontFamily: mono, fontSize: "clamp(10px, 19cqw, 13px)", fontWeight: 700, color: C.onSurface, lineHeight: 1 }}>
               {eff.treks}<span style={{ fontSize: "0.6em", fontWeight: 600, opacity: 0.65 }}>/9</span>
