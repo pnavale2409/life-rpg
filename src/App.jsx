@@ -1006,7 +1006,7 @@ function AttrRow({ icon: Icon, label, score, color, onClick, tagline }) {
 --------------------------------------------------------------- */
 function ScreenHeader({ title, sub, color, score }) {
   return (
-    <div className="px-4 pt-5 pb-4 flex items-center justify-between">
+    <div className="px-4 pt-5 pb-4 flex items-start justify-between">
       <div>
         <div className="flex items-center gap-2">
           <Diamond size={7} color={color} glow />
@@ -1014,7 +1014,7 @@ function ScreenHeader({ title, sub, color, score }) {
         </div>
         <p style={{ color: C.onSurfaceVariant, fontSize: 12.5, marginTop: 2, marginLeft: 15 }}>{sub}</p>
       </div>
-      <div className="text-right flex-shrink-0">
+      <div className="text-right flex-shrink-0" style={{ marginTop: -2 }}>
         <div style={{ fontFamily: mono, color, fontSize: 20, fontWeight: 700, textShadow: `0 0 10px ${mix(color, 40)}` }}>{score.toFixed(1)}</div>
         <div style={{ fontFamily: mono, color: C.faint, fontSize: 10.5 }}>/ 100</div>
       </div>
