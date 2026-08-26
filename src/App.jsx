@@ -1010,7 +1010,7 @@ function ScreenHeader({ title, sub, color, score }) {
       <div>
         <div className="flex items-center gap-2">
           <Diamond size={7} color={color} glow />
-          <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 17, letterSpacing: 0.3 }}>{title.toUpperCase()}</div>
+          <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 14, letterSpacing: 0.3 }}>{title.toUpperCase()}</div>
         </div>
         <p style={{ color: C.onSurfaceVariant, fontSize: 12.5, marginTop: 2, marginLeft: 15 }}>{sub}</p>
       </div>
@@ -2816,7 +2816,7 @@ function ProgressTab({ gym }) {
     <div className="pb-4">
       <div className="px-4 pt-5 pb-2 flex items-center gap-2">
         <Diamond size={7} color={C.accent} glow />
-        <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 17, letterSpacing: 0.3 }}>PROGRESS</div>
+        <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 14, letterSpacing: 0.3 }}>PROGRESS</div>
       </div>
       <div className="px-4" style={{ marginTop: 10 }}>
         <div className="flex gap-1" style={{ marginBottom: 16, background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 12, padding: 4, overflowX: "auto" }}>
