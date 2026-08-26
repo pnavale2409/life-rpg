@@ -2456,7 +2456,7 @@ function VitalityOverviewTiles({ s, eff, onOpenProgress }) {
   const subStyle = { fontFamily: mono, fontSize: 10.5, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
 
   return (
-    <div className="pl-4 pr-2 mb-3" style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 8 }}>
+    <div className="mx-4 mb-3" style={{ display: "grid", gridTemplateColumns: "3fr 2fr 88px", gap: 8 }}>
       <div
         style={{
           position: "relative", overflow: "hidden", borderRadius: 12, padding: "10px 12px", minWidth: 0,
