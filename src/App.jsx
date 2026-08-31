@@ -1424,25 +1424,28 @@ function ExerciseSetLogger({ ex, name, color, onSetChange, onAddSet, onRemoveSet
           {isTimed
             ? totalMinutes > 0 && <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint, flexShrink: 0 }}>{totalMinutes}min</span>
             : topWeight > 0 && <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint, flexShrink: 0 }}>{topWeight}kg</span>}
-          <div className="flex flex-col items-center" style={{ flexShrink: 0, gap: 2 }}>
-            {open ? <ChevronUp size={14} color={C.onSurfaceVariant} /> : <ChevronDown size={14} color={C.onSurfaceVariant} />}
-            {onDelete && (
-              <Touchable writeAction onClick={(e) => { e.stopPropagation(); onDelete(); }} style={{ padding: 1 }}>
-                <Trash2 size={11} color={C.faint} />
-              </Touchable>
-            )}
-          </div>
+          {open ? <ChevronUp size={14} color={C.onSurfaceVariant} style={{ flexShrink: 0 }} /> : <ChevronDown size={14} color={C.onSurfaceVariant} style={{ flexShrink: 0 }} />}
         </div>
       </Touchable>
       {!open && (
-        <div style={{ padding: "0 12px 10px 22px" }}>
+        <div className="flex items-center justify-between" style={{ padding: "0 12px 10px 22px" }}>
           <span style={{ color: C.faint, fontFamily: mono, fontSize: 10.5 }}>{targetLabel}</span>
+          {onDelete && (
+            <Touchable writeAction onClick={onDelete} style={{ padding: 2 }}>
+              <Trash2 size={12} color={C.faint} />
+            </Touchable>
+          )}
         </div>
       )}
       {open && (
         <div className="flex flex-col gap-1.5" style={{ padding: "0 12px 12px 12px", borderTop: `1px solid ${C.outlineVariant}`, marginTop: 2, paddingTop: 10 }}>
-          <div style={{ paddingLeft: 14, marginBottom: 2 }}>
-            <span style={{ color: C.faint, fontFamily: mono, fontSize: 10.5 }}>{targetLabel}</span>
+          <div className="flex items-center justify-between" style={{ marginBottom: 2 }}>
+            <span style={{ paddingLeft: 14, color: C.faint, fontFamily: mono, fontSize: 10.5 }}>{targetLabel}</span>
+            {onDelete && (
+              <Touchable writeAction onClick={onDelete} style={{ padding: 2 }}>
+                <Trash2 size={12} color={C.faint} />
+              </Touchable>
+            )}
           </div>
           <div className="flex flex-col gap-1.5" style={{ paddingLeft: 14 }}>
             {ex.sets.map((s, i) => (
