@@ -1841,6 +1841,7 @@ function CatchUpSection({ gym, update }) {
 function ExtraExercises({ date, log, update, gym }) {
   const [adding, setAdding] = useState(false);
   const [mode, setMode] = useState(gym.exercises.length > 0 ? "existing" : "new");
+  const [existingMuscle, setExistingMuscle] = useState("All muscles");
   const [selectedId, setSelectedId] = useState("");
   const [newName, setNewName] = useState("");
   const [newMuscle, setNewMuscle] = useState(EXERCISE_CATEGORIES[0]);
@@ -1849,11 +1850,20 @@ function ExtraExercises({ date, log, update, gym }) {
   const [reps, setReps] = useState(10);
   const extras = log.extras || [];
 
-  const effectiveSelectedId = gym.exercises.some((ex) => ex.id === selectedId) ? selectedId : (gym.exercises[0]?.id || "");
+  const existingMuscles = [...new Set(gym.exercises.map((ex) => ex.muscle))];
+  const filteredExisting = existingMuscle === "All muscles" ? gym.exercises : gym.exercises.filter((ex) => ex.muscle === existingMuscle);
+  const effectiveSelectedId = filteredExisting.some((ex) => ex.id === selectedId) ? selectedId : (filteredExisting[0]?.id || "");
+
+  const handleExistingMuscleChange = (m) => {
+    setExistingMuscle(m);
+    const stillValid = m === "All muscles" ? gym.exercises : gym.exercises.filter((ex) => ex.muscle === m);
+    if (!stillValid.find((ex) => ex.id === selectedId)) setSelectedId(stillValid[0]?.id || "");
+  };
 
   const resetForm = () => {
     setAdding(false);
     setMode(gym.exercises.length > 0 ? "existing" : "new");
+    setExistingMuscle("All muscles");
     setSelectedId(""); setNewName(""); setDupWarning(false);
     setSets(3); setReps(10);
   };
@@ -1934,9 +1944,15 @@ function ExtraExercises({ date, log, update, gym }) {
             gym.exercises.length === 0 ? (
               <p style={{ color: C.faint, fontSize: 12 }}>Database is empty — switch to "New Exercise".</p>
             ) : (
-              <select value={effectiveSelectedId} onChange={(e) => setSelectedId(e.target.value)} style={gymSelectStyle}>
-                {gym.exercises.map((ex) => <option key={ex.id} value={ex.id}>{ex.name} · {ex.muscle}</option>)}
-              </select>
+              <>
+                <select value={existingMuscle} onChange={(e) => handleExistingMuscleChange(e.target.value)} style={gymSelectStyle}>
+                  <option value="All muscles">All muscles</option>
+                  {existingMuscles.map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+                <select value={effectiveSelectedId} onChange={(e) => setSelectedId(e.target.value)} style={gymSelectStyle}>
+                  {filteredExisting.map((ex) => <option key={ex.id} value={ex.id}>{ex.name}{existingMuscle === "All muscles" ? ` · ${ex.muscle}` : ""}</option>)}
+                </select>
+              </>
             )
           ) : (
             <>
