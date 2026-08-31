@@ -481,6 +481,27 @@ function migrateState(parsed) {
   if (!Array.isArray(next.vitality.gym.schedules)) next.vitality.gym = { ...next.vitality.gym, schedules: [] };
   if (!next.vitality.gym.logs || typeof next.vitality.gym.logs !== "object") next.vitality.gym = { ...next.vitality.gym, logs: {} };
   if (!Array.isArray(next.vitality.gym.catchups)) next.vitality.gym = { ...next.vitality.gym, catchups: [] };
+  // Migrate old-shape extras (plain {sets: number, reps: number}, no
+  // per-set data, no exerciseId) into the same loggable shape as a
+  // planned exercise, so old saved logs still render and their history
+  // still shows up in Progress.
+  Object.keys(next.vitality.gym.logs || {}).forEach((ds) => {
+    const l = next.vitality.gym.logs[ds];
+    if (!l || !Array.isArray(l.extras)) return;
+    l.extras = l.extras.map((item) => {
+      if (Array.isArray(item.sets)) return item; // already migrated
+      const targetSets = Math.max(1, Number(item.sets) || 1);
+      const targetReps = Number(item.reps) || 0;
+      return {
+        id: item.id || uid(),
+        exerciseId: item.exerciseId || null,
+        name: item.name || "(unnamed)",
+        isTimed: !!item.isTimed,
+        targetSets, targetReps,
+        sets: Array.from({ length: targetSets }, () => ({ weight: 0, reps: targetReps, completed: false })),
+      };
+    });
+  });
   if (!next.wisdom) next.wisdom = base.wisdom;
   if (!next.wealth) next.wealth = base.wealth;
   if (!Array.isArray(next.wealth.saveAllowance)) next.wealth = { ...next.wealth, saveAllowance: [0, 0, 0] };
@@ -1845,6 +1866,7 @@ function ExtraExercises({ date, log, update, gym }) {
   const [selectedId, setSelectedId] = useState("");
   const [newName, setNewName] = useState("");
   const [newMuscle, setNewMuscle] = useState(EXERCISE_CATEGORIES[0]);
+  const [newIsTimed, setNewIsTimed] = useState(false);
   const [dupWarning, setDupWarning] = useState(false);
   const [sets, setSets] = useState(3);
   const [reps, setReps] = useState(10);
@@ -1853,6 +1875,9 @@ function ExtraExercises({ date, log, update, gym }) {
   const existingMuscles = [...new Set(gym.exercises.map((ex) => ex.muscle))];
   const filteredExisting = existingMuscle === "All muscles" ? gym.exercises : gym.exercises.filter((ex) => ex.muscle === existingMuscle);
   const effectiveSelectedId = filteredExisting.some((ex) => ex.id === selectedId) ? selectedId : (filteredExisting[0]?.id || "");
+  // isTimed for the exercise currently staged in the picker, so the
+  // SETS/REPS row can flip its label (and starting values) to MIN.
+  const pickerIsTimed = mode === "new" ? newIsTimed : !!gym.exercises.find((ex) => ex.id === effectiveSelectedId)?.isTimed;
 
   const handleExistingMuscleChange = (m) => {
     setExistingMuscle(m);
@@ -1864,7 +1889,7 @@ function ExtraExercises({ date, log, update, gym }) {
     setAdding(false);
     setMode(gym.exercises.length > 0 ? "existing" : "new");
     setExistingMuscle("All muscles");
-    setSelectedId(""); setNewName(""); setDupWarning(false);
+    setSelectedId(""); setNewName(""); setNewIsTimed(false); setDupWarning(false);
     setSets(3); setReps(10);
   };
 
@@ -1883,16 +1908,21 @@ function ExtraExercises({ date, log, update, gym }) {
       if (!Array.isArray(l.extras)) l.extras = [];
       let exId = effectiveSelectedId;
       let finalName = trimmed;
+      let finalIsTimed = false;
       if (mode === "new") {
         const norm = trimmed.toLowerCase();
         const existing = d.exercises.find((ex) => ex.name.trim().toLowerCase() === norm);
         exId = existing ? existing.id : uid();
         finalName = existing ? existing.name : trimmed;
-        if (!existing) d.exercises.push({ id: exId, name: trimmed, muscle: newMuscle, isTimed: false });
+        finalIsTimed = existing ? !!existing.isTimed : newIsTimed;
+        if (!existing) d.exercises.push({ id: exId, name: trimmed, muscle: newMuscle, isTimed: newIsTimed });
       } else {
-        finalName = d.exercises.find((ex) => ex.id === exId)?.name || "(deleted exercise)";
+        const ex = d.exercises.find((e) => e.id === exId);
+        finalName = ex?.name || "(deleted exercise)";
+        finalIsTimed = !!ex?.isTimed;
       }
-      l.extras.push({ id: uid(), exerciseId: exId, name: finalName, sets, reps });
+      const setsArr = Array.from({ length: Math.max(1, sets) }, () => ({ weight: 0, reps, completed: false }));
+      l.extras.push({ id: uid(), exerciseId: exId, name: finalName, isTimed: finalIsTimed, targetSets: sets, targetReps: reps, sets: setsArr });
     });
     resetForm();
   };
@@ -1901,6 +1931,24 @@ function ExtraExercises({ date, log, update, gym }) {
     update((d) => {
       const l = d.logs[date];
       if (l?.extras) l.extras = l.extras.filter((i) => i.id !== id);
+    });
+  };
+  const setExtraSetField = (extraId, setIndex, field, value) => {
+    update((d) => {
+      const ex = d.logs[date]?.extras?.find((e) => e.id === extraId);
+      if (ex) ex.sets[setIndex][field] = value;
+    });
+  };
+  const addExtraSet = (extraId) => {
+    update((d) => {
+      const ex = d.logs[date]?.extras?.find((e) => e.id === extraId);
+      if (ex) ex.sets.push({ weight: 0, reps: ex.targetReps, completed: false });
+    });
+  };
+  const removeExtraSet = (extraId, setIndex) => {
+    update((d) => {
+      const ex = d.logs[date]?.extras?.find((e) => e.id === extraId);
+      if (ex && ex.sets.length > 1) ex.sets.splice(setIndex, 1);
     });
   };
 
@@ -1918,10 +1966,16 @@ function ExtraExercises({ date, log, update, gym }) {
       {extras.length > 0 && (
         <div className="flex flex-col gap-2" style={{ marginBottom: adding ? 8 : 0 }}>
           {extras.map((item) => (
-            <div key={item.id} style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 10, padding: "8px 12px" }} className="flex items-center gap-2">
-              <span style={{ flex: 1, color: C.onSurface, fontFamily: sans, fontSize: 13 }}>{item.name}</span>
-              <span style={{ color: C.faint, fontFamily: mono, fontSize: 11.5 }}>{item.sets}×{item.reps}</span>
-              <Touchable writeAction onClick={() => removeExtra(item.id)} style={{ padding: 4 }}>
+            <div key={item.id} className="flex items-start gap-2">
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <ExerciseSetLogger
+                  ex={item} name={item.name} color={C.accent} isTimed={!!item.isTimed}
+                  onSetChange={(i, field, value) => setExtraSetField(item.id, i, field, value)}
+                  onAddSet={() => addExtraSet(item.id)}
+                  onRemoveSet={(i) => removeExtraSet(item.id, i)}
+                />
+              </div>
+              <Touchable writeAction onClick={() => removeExtra(item.id)} style={{ padding: 4, marginTop: 10, flexShrink: 0 }}>
                 <Trash2 size={13} color={C.faint} />
               </Touchable>
             </div>
@@ -1969,6 +2023,14 @@ function ExtraExercises({ date, log, update, gym }) {
               <select value={newMuscle} onChange={(e) => setNewMuscle(e.target.value)} style={gymSelectStyle} disabled={dupWarning}>
                 {EXERCISE_CATEGORIES.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
+              {!dupWarning && (
+                <Touchable onClick={() => setNewIsTimed((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0" }}>
+                  <div style={{ width: 15, height: 15, borderRadius: 4, flexShrink: 0, border: `2px solid ${newIsTimed ? C.accent : C.faint}`, background: newIsTimed ? C.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    {newIsTimed && <Check size={9} color={C.surface} strokeWidth={3.5} />}
+                  </div>
+                  <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontSize: 11.5 }}>Track by time (minutes) instead of weight &amp; reps</span>
+                </Touchable>
+              )}
             </>
           )}
 
@@ -1978,7 +2040,7 @@ function ExtraExercises({ date, log, update, gym }) {
               <Stepper value={sets} onChange={setSets} color={C.accent} max={20} />
             </div>
             <div className="flex items-center gap-2">
-              <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>REPS</span>
+              <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>{pickerIsTimed ? "MIN" : "REPS"}</span>
               <Stepper value={reps} onChange={setReps} color={C.accent} max={50} />
             </div>
           </div>
@@ -2651,10 +2713,10 @@ function fmtDayMonthNum(dateStr) {
    catch-ups (keyed by completedDate). */
 function buildExercisePoints(gym, exerciseId, isTimed) {
   const points = [];
-  const consume = (date, exList) => {
-    const ex = (exList || []).find((e) => e.exerciseId === exerciseId);
-    if (!ex) return;
-    const done = ex.sets.filter((s) => s.completed);
+  const consume = (date, entries) => {
+    const matches = (entries || []).filter((e) => e.exerciseId === exerciseId);
+    if (matches.length === 0) return;
+    const done = matches.flatMap((e) => e.sets.filter((s) => s.completed));
     if (done.length === 0) return;
     if (isTimed) {
       points.push({ date, time: Math.max(...done.map((s) => s.reps || 0)) });
@@ -2667,7 +2729,7 @@ function buildExercisePoints(gym, exerciseId, isTimed) {
       });
     }
   };
-  Object.entries(gym.logs || {}).forEach(([date, log]) => consume(date, log?.exercises));
+  Object.entries(gym.logs || {}).forEach(([date, log]) => consume(date, [...(log?.exercises || []), ...(log?.extras || [])]));
   (gym.catchups || []).forEach((c) => { if (c.done && c.completedDate) consume(c.completedDate, c.exercises); });
   points.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   return points;
@@ -2676,12 +2738,12 @@ function buildExercisePoints(gym, exerciseId, isTimed) {
    ascending — used to power the Reps tab's weight filter. */
 function distinctWeightsForExercise(gym, exerciseId) {
   const weights = new Set();
-  const scan = (exList) => {
-    const ex = (exList || []).find((e) => e.exerciseId === exerciseId);
-    if (!ex) return;
-    ex.sets.filter((s) => s.completed && s.weight > 0).forEach((s) => weights.add(s.weight));
+  const scan = (entries) => {
+    (entries || []).filter((e) => e.exerciseId === exerciseId).forEach((e) => {
+      e.sets.filter((s) => s.completed && s.weight > 0).forEach((s) => weights.add(s.weight));
+    });
   };
-  Object.values(gym.logs || {}).forEach((log) => scan(log?.exercises));
+  Object.values(gym.logs || {}).forEach((log) => scan([...(log?.exercises || []), ...(log?.extras || [])]));
   (gym.catchups || []).forEach((c) => { if (c.done) scan(c.exercises); });
   return [...weights].sort((a, b) => a - b);
 }
@@ -2690,14 +2752,14 @@ function distinctWeightsForExercise(gym, exerciseId) {
    reps am I getting at 60kg" instead of mixing reps across weights. */
 function buildExercisePointsAtWeight(gym, exerciseId, weight) {
   const points = [];
-  const consume = (date, exList) => {
-    const ex = (exList || []).find((e) => e.exerciseId === exerciseId);
-    if (!ex) return;
-    const done = ex.sets.filter((s) => s.completed && s.weight === weight);
+  const consume = (date, entries) => {
+    const matches = (entries || []).filter((e) => e.exerciseId === exerciseId);
+    if (matches.length === 0) return;
+    const done = matches.flatMap((e) => e.sets.filter((s) => s.completed && s.weight === weight));
     if (done.length === 0) return;
     points.push({ date, reps: Math.max(...done.map((s) => s.reps || 0)) });
   };
-  Object.entries(gym.logs || {}).forEach(([date, log]) => consume(date, log?.exercises));
+  Object.entries(gym.logs || {}).forEach(([date, log]) => consume(date, [...(log?.exercises || []), ...(log?.extras || [])]));
   (gym.catchups || []).forEach((c) => { if (c.done && c.completedDate) consume(c.completedDate, c.exercises); });
   points.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   return points;
