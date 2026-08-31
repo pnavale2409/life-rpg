@@ -1400,7 +1400,7 @@ function SetRow({ index, set, onChange, onRemove, canRemove, color, isTimed }) {
 
 /* One exercise's worth of set rows, collapsed into a dropdown by default.
    `ex` is a { exerciseId, targetSets, targetReps, sets } entry. */
-function ExerciseSetLogger({ ex, name, color, onSetChange, onAddSet, onRemoveSet, defaultOpen = false, isTimed = false }) {
+function ExerciseSetLogger({ ex, name, color, onSetChange, onAddSet, onRemoveSet, onDelete, defaultOpen = false, isTimed = false }) {
   const [open, setOpen] = useState(defaultOpen);
   const doneCount = ex.sets.filter((s) => s.completed).length;
   const allDone = ex.sets.length > 0 && doneCount === ex.sets.length;
@@ -1424,7 +1424,14 @@ function ExerciseSetLogger({ ex, name, color, onSetChange, onAddSet, onRemoveSet
           {isTimed
             ? totalMinutes > 0 && <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint, flexShrink: 0 }}>{totalMinutes}min</span>
             : topWeight > 0 && <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint, flexShrink: 0 }}>{topWeight}kg</span>}
-          {open ? <ChevronUp size={14} color={C.onSurfaceVariant} style={{ flexShrink: 0 }} /> : <ChevronDown size={14} color={C.onSurfaceVariant} style={{ flexShrink: 0 }} />}
+          <div className="flex flex-col items-center" style={{ flexShrink: 0, gap: 2 }}>
+            {open ? <ChevronUp size={14} color={C.onSurfaceVariant} /> : <ChevronDown size={14} color={C.onSurfaceVariant} />}
+            {onDelete && (
+              <Touchable writeAction onClick={(e) => { e.stopPropagation(); onDelete(); }} style={{ padding: 1 }}>
+                <Trash2 size={11} color={C.faint} />
+              </Touchable>
+            )}
+          </div>
         </div>
       </Touchable>
       {!open && (
@@ -1966,19 +1973,13 @@ function ExtraExercises({ date, log, update, gym }) {
       {extras.length > 0 && (
         <div className="flex flex-col gap-2" style={{ marginBottom: adding ? 8 : 0 }}>
           {extras.map((item) => (
-            <div key={item.id} className="flex items-start gap-2">
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <ExerciseSetLogger
-                  ex={item} name={item.name} color={C.accent} isTimed={!!item.isTimed}
-                  onSetChange={(i, field, value) => setExtraSetField(item.id, i, field, value)}
-                  onAddSet={() => addExtraSet(item.id)}
-                  onRemoveSet={(i) => removeExtraSet(item.id, i)}
-                />
-              </div>
-              <Touchable writeAction onClick={() => removeExtra(item.id)} style={{ padding: 4, marginTop: 10, flexShrink: 0 }}>
-                <Trash2 size={13} color={C.faint} />
-              </Touchable>
-            </div>
+            <ExerciseSetLogger
+              key={item.id} ex={item} name={item.name} color={C.accent} isTimed={!!item.isTimed}
+              onSetChange={(i, field, value) => setExtraSetField(item.id, i, field, value)}
+              onAddSet={() => addExtraSet(item.id)}
+              onRemoveSet={(i) => removeExtraSet(item.id, i)}
+              onDelete={() => removeExtra(item.id)}
+            />
           ))}
         </div>
       )}
