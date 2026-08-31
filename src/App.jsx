@@ -1736,7 +1736,7 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
         </div>
       )}
 
-      {log && !log.skipped && <ExtraExercises date={viewDate} log={log} update={update} />}
+      {log && !log.skipped && <ExtraExercises date={viewDate} log={log} update={update} gym={gym} />}
     </div>
   );
 }
@@ -1838,23 +1838,53 @@ function CatchUpSection({ gym, update }) {
 /* Per-day "extra" exercise log — same idea as Diet's Extra section: things
    you did outside the schedule for this one day only, stored inside that
    day's log so it never touches the schedule template. */
-function ExtraExercises({ date, log, update }) {
+function ExtraExercises({ date, log, update, gym }) {
   const [adding, setAdding] = useState(false);
-  const [name, setName] = useState("");
+  const [mode, setMode] = useState(gym.exercises.length > 0 ? "existing" : "new");
+  const [selectedId, setSelectedId] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newMuscle, setNewMuscle] = useState(EXERCISE_CATEGORIES[0]);
+  const [dupWarning, setDupWarning] = useState(false);
   const [sets, setSets] = useState(3);
   const [reps, setReps] = useState(10);
   const extras = log.extras || [];
 
+  const effectiveSelectedId = gym.exercises.some((ex) => ex.id === selectedId) ? selectedId : (gym.exercises[0]?.id || "");
+
+  const resetForm = () => {
+    setAdding(false);
+    setMode(gym.exercises.length > 0 ? "existing" : "new");
+    setSelectedId(""); setNewName(""); setDupWarning(false);
+    setSets(3); setReps(10);
+  };
+
   const addExtra = () => {
-    const trimmed = name.trim();
-    if (!trimmed) return;
+    let trimmed = "";
+    if (mode === "new") {
+      trimmed = newName.trim();
+      if (!trimmed) return;
+    } else if (!effectiveSelectedId) {
+      return;
+    }
+
     update((d) => {
       const l = d.logs[date];
       if (!l) return;
       if (!Array.isArray(l.extras)) l.extras = [];
-      l.extras.push({ id: uid(), name: trimmed, sets, reps });
+      let exId = effectiveSelectedId;
+      let finalName = trimmed;
+      if (mode === "new") {
+        const norm = trimmed.toLowerCase();
+        const existing = d.exercises.find((ex) => ex.name.trim().toLowerCase() === norm);
+        exId = existing ? existing.id : uid();
+        finalName = existing ? existing.name : trimmed;
+        if (!existing) d.exercises.push({ id: exId, name: trimmed, muscle: newMuscle, isTimed: false });
+      } else {
+        finalName = d.exercises.find((ex) => ex.id === exId)?.name || "(deleted exercise)";
+      }
+      l.extras.push({ id: uid(), exerciseId: exId, name: finalName, sets, reps });
     });
-    setName(""); setSets(3); setReps(10); setAdding(false);
+    resetForm();
   };
 
   const removeExtra = (id) => {
@@ -1891,7 +1921,41 @@ function ExtraExercises({ date, log, update }) {
 
       {adding && (
         <div className="flex flex-col gap-2">
-          <input type="text" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Exercise you did extra (e.g. Farmer's Carry)" style={gymInputStyle} />
+          <div className="flex gap-2 mb-1">
+            <Touchable onClick={() => setMode("existing")} style={{ flex: 1, borderRadius: 8, padding: "6px 0", textAlign: "center", background: mode === "existing" ? mix(C.accent, 18) : "transparent", border: `1px solid ${mode === "existing" ? mix(C.accent, 50) : C.outlineVariant}` }}>
+              <span style={{ fontFamily: sans, fontSize: 12, fontWeight: 600, color: mode === "existing" ? C.accent : C.onSurfaceVariant }}>From Database</span>
+            </Touchable>
+            <Touchable onClick={() => setMode("new")} style={{ flex: 1, borderRadius: 8, padding: "6px 0", textAlign: "center", background: mode === "new" ? mix(C.accent, 18) : "transparent", border: `1px solid ${mode === "new" ? mix(C.accent, 50) : C.outlineVariant}` }}>
+              <span style={{ fontFamily: sans, fontSize: 12, fontWeight: 600, color: mode === "new" ? C.accent : C.onSurfaceVariant }}>New Exercise</span>
+            </Touchable>
+          </div>
+
+          {mode === "existing" ? (
+            gym.exercises.length === 0 ? (
+              <p style={{ color: C.faint, fontSize: 12 }}>Database is empty — switch to "New Exercise".</p>
+            ) : (
+              <select value={effectiveSelectedId} onChange={(e) => setSelectedId(e.target.value)} style={gymSelectStyle}>
+                {gym.exercises.map((ex) => <option key={ex.id} value={ex.id}>{ex.name} · {ex.muscle}</option>)}
+              </select>
+            )
+          ) : (
+            <>
+              <input
+                type="text" autoFocus value={newName}
+                onChange={(e) => {
+                  setNewName(e.target.value);
+                  const norm = e.target.value.trim().toLowerCase();
+                  setDupWarning(norm.length > 0 && gym.exercises.some((ex) => ex.name.trim().toLowerCase() === norm));
+                }}
+                placeholder="Exercise you did extra (e.g. Farmer's Carry)" style={gymInputStyle}
+              />
+              {dupWarning && <p style={{ color: C.faint, fontSize: 11, margin: 0 }}>Already in your database — this will reuse that entry instead of duplicating it.</p>}
+              <select value={newMuscle} onChange={(e) => setNewMuscle(e.target.value)} style={gymSelectStyle} disabled={dupWarning}>
+                {EXERCISE_CATEGORIES.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </>
+          )}
+
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>SETS</span>
@@ -1903,7 +1967,7 @@ function ExtraExercises({ date, log, update }) {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Touchable onClick={() => { setAdding(false); setName(""); }} style={{ flex: 1, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Touchable onClick={resetForm} style={{ flex: 1, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Cancel</span>
             </Touchable>
             <Touchable writeAction onClick={addExtra} style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
@@ -2592,6 +2656,36 @@ function buildExercisePoints(gym, exerciseId, isTimed) {
   points.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   return points;
 }
+/* Distinct weights (kg) ever logged as a completed set for this exercise,
+   ascending — used to power the Reps tab's weight filter. */
+function distinctWeightsForExercise(gym, exerciseId) {
+  const weights = new Set();
+  const scan = (exList) => {
+    const ex = (exList || []).find((e) => e.exerciseId === exerciseId);
+    if (!ex) return;
+    ex.sets.filter((s) => s.completed && s.weight > 0).forEach((s) => weights.add(s.weight));
+  };
+  Object.values(gym.logs || {}).forEach((log) => scan(log?.exercises));
+  (gym.catchups || []).forEach((c) => { if (c.done) scan(c.exercises); });
+  return [...weights].sort((a, b) => a - b);
+}
+/* Same shape as buildExercisePoints, but reps-only and scoped to sets
+   logged at exactly the given weight — lets the Reps tab show "how many
+   reps am I getting at 60kg" instead of mixing reps across weights. */
+function buildExercisePointsAtWeight(gym, exerciseId, weight) {
+  const points = [];
+  const consume = (date, exList) => {
+    const ex = (exList || []).find((e) => e.exerciseId === exerciseId);
+    if (!ex) return;
+    const done = ex.sets.filter((s) => s.completed && s.weight === weight);
+    if (done.length === 0) return;
+    points.push({ date, reps: Math.max(...done.map((s) => s.reps || 0)) });
+  };
+  Object.entries(gym.logs || {}).forEach(([date, log]) => consume(date, log?.exercises));
+  (gym.catchups || []).forEach((c) => { if (c.done && c.completedDate) consume(c.completedDate, c.exercises); });
+  points.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return points;
+}
 /* Collapses daily points into one max-value point per week. */
 function toWeeklyMax(points, field) {
   const byWeek = new Map();
@@ -2710,6 +2804,7 @@ function ProgressFilterSelect({ value, onChange, options, color }) {
    is selected. */
 function ProgressMetricSection({ label, field, unit, color, gym, isTimed }) {
   const pool = (gym.exercises || []).filter((e) => !!e.isTimed === isTimed);
+  const repsFilterEnabled = field === "reps" && !isTimed;
 
   if (pool.length === 0) {
     return (
@@ -2726,22 +2821,32 @@ function ProgressMetricSection({ label, field, unit, color, gym, isTimed }) {
   const [muscle, setMuscle] = useState("All muscles");
   const filteredPool = muscle === "All muscles" ? pool : pool.filter((e) => e.muscle === muscle);
   const [activeId, setActiveId] = useState(pool[0].id);
+  const [weightFilter, setWeightFilter] = useState("All weights");
 
   const handleMuscleChange = (m) => {
     setMuscle(m);
     const stillValid = m === "All muscles" ? pool : pool.filter((e) => e.muscle === m);
     if (!stillValid.find((e) => e.id === activeId)) setActiveId(stillValid[0]?.id);
+    setWeightFilter("All weights");
+  };
+  const handleExerciseChange = (id) => {
+    setActiveId(id);
+    setWeightFilter("All weights");
   };
 
   const activeExercise = pool.find((e) => e.id === activeId) || filteredPool[0];
-  const points = activeExercise ? buildExercisePoints(gym, activeExercise.id, isTimed) : [];
+  const weightOptions = repsFilterEnabled && activeExercise ? distinctWeightsForExercise(gym, activeExercise.id) : [];
+  const usingWeightFilter = repsFilterEnabled && weightFilter !== "All weights" && weightOptions.includes(Number(weightFilter));
+  const points = activeExercise
+    ? (usingWeightFilter ? buildExercisePointsAtWeight(gym, activeExercise.id, Number(weightFilter)) : buildExercisePoints(gym, activeExercise.id, isTimed))
+    : [];
   const dailyLast10 = points.slice(-10);
   const weekly = toWeeklyMax(points, field);
 
   return (
     <div>
       <SectionLabel>{label} per exercise</SectionLabel>
-      <div className="flex gap-2" style={{ marginBottom: 14 }}>
+      <div className="flex gap-2" style={{ marginBottom: repsFilterEnabled && activeExercise && weightOptions.length > 0 ? 8 : 14 }}>
         <ProgressFilterSelect
           value={muscle}
           onChange={handleMuscleChange}
@@ -2750,15 +2855,25 @@ function ProgressMetricSection({ label, field, unit, color, gym, isTimed }) {
         />
         <ProgressFilterSelect
           value={activeExercise?.id || ""}
-          onChange={setActiveId}
+          onChange={handleExerciseChange}
           options={filteredPool.map((e) => ({ value: e.id, label: e.name }))}
           color={color}
         />
       </div>
+      {repsFilterEnabled && activeExercise && weightOptions.length > 0 && (
+        <div className="flex gap-2" style={{ marginBottom: 14 }}>
+          <ProgressFilterSelect
+            value={weightFilter}
+            onChange={setWeightFilter}
+            options={["All weights", ...weightOptions.map(String)].map((w) => ({ value: w, label: w === "All weights" ? w : `${w}kg` }))}
+            color={color}
+          />
+        </div>
+      )}
       {activeExercise ? (
         <>
-          <ProgressChartCard title={`DAILY · last ${dailyLast10.length} sessions`} points={dailyLast10} field={field} color={color} unit={unit} />
-          <ProgressChartCard title="WEEKLY MAX" points={weekly} field={field} color={color} unit={unit} />
+          <ProgressChartCard title={`DAILY · last ${dailyLast10.length} sessions${usingWeightFilter ? ` @ ${weightFilter}kg` : ""}`} points={dailyLast10} field={field} color={color} unit={unit} />
+          <ProgressChartCard title={usingWeightFilter ? `WEEKLY MAX @ ${weightFilter}kg` : "WEEKLY MAX"} points={weekly} field={field} color={color} unit={unit} />
         </>
       ) : (
         <p style={{ color: C.faint, fontSize: 12.5 }}>No exercise matches that muscle yet.</p>
