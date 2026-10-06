@@ -12,7 +12,7 @@ import {
   Utensils, ListTodo, ArrowRightToLine, Pencil, Users, UserPlus, History,
   Briefcase, Plane, Tag, EyeOff, Eye,
   Rocket, TrendingUp, Building2, Shuffle, Gem, Globe,
-  Star, X, CalendarDays, Weight, Repeat, Timer, Award,
+  Star, X, CalendarDays, Weight, Repeat, Timer, Award, Scissors, Droplets,
 } from "lucide-react";
 
 const SYNC_ENABLED = true;
@@ -444,7 +444,61 @@ function defaultState() {
       days: {}, // { "YYYY-MM-DD": [{ id, title, completed }] }
       unlisted: [], // [{ id, title }] — backlog tasks not yet assigned to a day
     },
+    // Hair & skin care — also separate from the Level 1 quest. Nothing here
+    // feeds any score or XP. Logs are keyed by date: hair { wash, comb,
+    // minoxidil }, skin { amCleanser, amMoisturiser, amSunscreen,
+    // pmCleanser, pmMoisturiser } (all booleans).
+    care: {
+      hair: { logs: {} },
+      skin: { logs: {} },
+    },
   };
+}
+
+// Hair & skin care steps, split into a day part and a night part. The night
+// parts only count as pending on the nav dot from 6 PM.
+const HAIR_DAY_STEPS = [["wash", "Wash"], ["comb", "Comb"]];
+const HAIR_NIGHT_STEPS = [["minoxidil", "Minoxidil"]];
+const SKIN_AM_STEPS = [["amCleanser", "Cleanser"], ["amMoisturiser", "Moisturiser"], ["amSunscreen", "Sunscreen"]];
+const SKIN_PM_STEPS = [["pmCleanser", "Cleanser"], ["pmMoisturiser", "Moisturiser"]];
+
+function careStatus(care, key) {
+  const h = care?.hair?.logs?.[key] || {};
+  const sk = care?.skin?.logs?.[key] || {};
+  return {
+    hairDayDone: HAIR_DAY_STEPS.every(([k]) => h[k]),
+    hairNightDone: HAIR_NIGHT_STEPS.every(([k]) => h[k]),
+    amDone: SKIN_AM_STEPS.every(([k]) => sk[k]),
+    pmDone: SKIN_PM_STEPS.every(([k]) => sk[k]),
+  };
+}
+
+// Toggle one hair/skin step for a date on state draft `d`. Hair care <-> the
+// scored "Hair care routine" mission: completing every hair step marks it;
+// breaking a complete set unmarks it. Any other change leaves a manually
+// ticked mission alone.
+function applyCareToggle(d, dateKey, group, k) {
+  if (!d.care) d.care = { hair: { logs: {} }, skin: { logs: {} } };
+  if (!d.care[group]) d.care[group] = { logs: {} };
+  if (!d.care[group].logs) d.care[group].logs = {};
+  if (!d.care[group].logs[dateKey]) d.care[group].logs[dateKey] = {};
+  const entry = d.care[group].logs[dateKey];
+  const hairAll = () => [...HAIR_DAY_STEPS, ...HAIR_NIGHT_STEPS].every(([hk]) => entry[hk]);
+  const wasAll = group === "hair" && hairAll();
+  entry[k] = !entry[k];
+  if (group === "hair" && hairAll() !== wasAll) {
+    if (!d.resolve.dailyLogs[dateKey]) d.resolve.dailyLogs[dateKey] = { wake: false, plan: false, hair: false, teeth: false };
+    d.resolve.dailyLogs[dateKey].hair = hairAll();
+  }
+}
+
+const CARE_SKIN_TOTAL = SKIN_AM_STEPS.length + SKIN_PM_STEPS.length;
+const CARE_HAIR_TOTAL = HAIR_DAY_STEPS.length + HAIR_NIGHT_STEPS.length;
+function careCounts(care, key) {
+  const h = care?.hair?.logs?.[key] || {};
+  const sk = care?.skin?.logs?.[key] || {};
+  const n = (steps, log) => steps.filter(([k]) => log[k]).length;
+  return { am: n(SKIN_AM_STEPS, sk), pm: n(SKIN_PM_STEPS, sk), hDay: n(HAIR_DAY_STEPS, h), hNight: n(HAIR_NIGHT_STEPS, h) };
 }
 
 function migrateState(parsed) {
@@ -516,6 +570,11 @@ function migrateState(parsed) {
   if (!next.planner) next.planner = base.planner;
   if (!next.planner.days || typeof next.planner.days !== "object") next.planner = { ...next.planner, days: {} };
   if (!Array.isArray(next.planner.unlisted)) next.planner = { ...next.planner, unlisted: [] };
+  if (!next.care) next.care = base.care;
+  if (!next.care.hair || typeof next.care.hair !== "object") next.care = { ...next.care, hair: { logs: {} } };
+  if (!next.care.skin || typeof next.care.skin !== "object") next.care = { ...next.care, skin: { logs: {} } };
+  if (!next.care.hair.logs) next.care.hair = { ...next.care.hair, logs: {} };
+  if (!next.care.skin.logs) next.care.skin = { ...next.care.skin, logs: {} };
   return next;
 }
 
@@ -1098,8 +1157,9 @@ function RestrictedTab({ label, Icon }) {
   );
 }
 
-function Mission({ title, points, earned, children, color, defaultOpen = false, rightLabel, locked = false, nested = false, emphasized = false, bleed = false, noAccent = false }) {
+function Mission({ title, points, earned, children, color, defaultOpen = false, rightLabel, locked = false, nested = false, emphasized = false, bleed = false, noAccent = false, forceOpen, anchorId }) {
   const [open, setOpen] = useState(locked ? false : defaultOpen);
+  useEffect(() => { if (forceOpen && !locked) setOpen(true); }, [forceOpen]);
   const radius = emphasized ? 8 : 10;
   return (
     <div
@@ -1111,6 +1171,7 @@ function Mission({ title, points, earned, children, color, defaultOpen = false, 
           : "transparent",
         boxShadow: emphasized ? `0 0 16px ${mix(color, 35)}` : "none",
       }}
+      id={anchorId}
       className={nested ? (bleed ? "mb-3 -mx-4" : "mb-3") : "mx-4 mb-3"}
     >
       <div style={{ position: "relative", background: C.container, borderRadius: radius }} className="overflow-hidden">
@@ -3237,7 +3298,115 @@ function WealthTab({ s, set, locked }) {
 /* ---------------------------------------------------------------
    RESOLVE TAB
 --------------------------------------------------------------- */
-function ResolveTab({ s, effective, set, locked, wealth }) {
+/* Resolve overview: two tiles (Skin, Hair), each showing today's AM and PM
+   step counts. Unscored. */
+function CareTile({ label, am, pm, solid = false, onClick }) {
+  return (
+    <Touchable
+      onClick={onClick}
+      style={{
+        position: "relative", overflow: "hidden", display: "block", borderRadius: 12, padding: "8px 12px", minWidth: 0,
+        background: solid ? `linear-gradient(150deg, ${mix(C.accent, 72)}, ${mix(C.accent, 44)})` : C.container,
+        border: `1px solid ${solid ? mix(C.accent, 80) : mix(C.accent, 55)}`,
+        boxShadow: solid ? `0 4px 18px ${mix(C.accent, 44)}` : "none",
+      }}
+    >
+      <div style={{ fontFamily: sans, fontWeight: 700, fontSize: 10, letterSpacing: 0.5, color: solid ? mix("#fff", 75) : C.accent }}>{label}</div>
+      <div style={{ fontFamily: mono, fontSize: 11.5, fontWeight: 600, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: solid ? "#fff" : C.onSurface }}>
+        AM {am[0]}/{am[1]} · PM {pm[0]}/{pm[1]}
+      </div>
+    </Touchable>
+  );
+}
+
+function CareOverviewTiles({ care, onSkin, onHair }) {
+  const c = careCounts(care, fmtDate(new Date()));
+  return (
+    <div className="mx-4 mb-3" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+      <CareTile solid label="SKIN" onClick={onSkin} am={[c.am, SKIN_AM_STEPS.length]} pm={[c.pm, SKIN_PM_STEPS.length]} />
+      <CareTile label="HAIR" onClick={onHair} am={[c.hDay, HAIR_DAY_STEPS.length]} pm={[c.hNight, HAIR_NIGHT_STEPS.length]} />
+    </div>
+  );
+}
+
+/* Skin care + Hair care cards (collapsible, like Vitality's Workout card).
+   Unscored, except that finishing every hair step ticks the scored "Hair care
+   routine" mission. Dates follow the Daily Missions day stepper. */
+function CareCards({ care, dateKey, idx, weekNum, shiftDay, set, skinOpen, hairOpen }) {
+  const color = C.accent;
+  const hairLog = care?.hair?.logs?.[dateKey] || {};
+  const skinLog = care?.skin?.logs?.[dateKey] || {};
+  const c = careCounts(care, dateKey);
+  const toggle = (group, k) => set((d) => applyCareToggle(d, dateKey, group, k));
+  const row = (group, log, k, label) => (
+    <label key={k} className="flex items-center gap-1">
+      <Check2 checked={!!log[k]} color={color} onClick={() => toggle(group, k)} />
+      <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>{label}</span>
+    </label>
+  );
+  const sub = (t) => <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, letterSpacing: 0.5, marginTop: 6 }}>{t}</div>;
+  const stepper = (
+    <div className="flex items-center justify-between mb-1">
+      <Touchable onClick={() => shiftDay(-1)} style={{ color: C.onSurfaceVariant, width: 32, height: 32, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <ChevronLeft size={16} />
+      </Touchable>
+      <div style={{ fontFamily: mono, color: C.faint, fontSize: 10.5 }}>Day {clamp(idx, 1, 91)} · Week {weekNum} · {dateKey}</div>
+      <Touchable onClick={() => shiftDay(1)} style={{ color: C.onSurfaceVariant, width: 32, height: 32, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <ChevronRight size={16} />
+      </Touchable>
+    </div>
+  );
+  return (
+    <>
+      <Mission anchorId="care-skin" forceOpen={skinOpen} title="Skin care" rightLabel={`${c.am + c.pm}/${CARE_SKIN_TOTAL}`} color={color} emphasized>
+        {stepper}
+        {sub("MORNING")}
+        {SKIN_AM_STEPS.map(([k, l]) => row("skin", skinLog, k, l))}
+        {sub("NIGHT")}
+        {SKIN_PM_STEPS.map(([k, l]) => row("skin", skinLog, k, l))}
+      </Mission>
+      <Mission anchorId="care-hair" forceOpen={hairOpen} title="Hair care" rightLabel={`${c.hDay + c.hNight}/${CARE_HAIR_TOTAL}`} color={color} emphasized>
+        {stepper}
+        {sub("DAY")}
+        {HAIR_DAY_STEPS.map(([k, l]) => row("hair", hairLog, k, l))}
+        {sub("NIGHT")}
+        {HAIR_NIGHT_STEPS.map(([k, l]) => row("hair", hairLog, k, l))}
+      </Mission>
+    </>
+  );
+}
+
+function CarePip({ on }) {
+  return <span style={{ width: 6, height: 6, borderRadius: "50%", display: "inline-block", background: on ? C.resolve : "transparent", border: `1.5px solid ${on ? C.resolve : C.faint}` }} />;
+}
+
+/* Home reminder: tiny hair + skin status in the Day/Week line. Filled pips
+   = done today (skin has a morning and a night pip). Tap to open that view. */
+function CareDots({ status, onHair, onSkin }) {
+  return (
+    <div className="flex items-center gap-0.5">
+      <Touchable onClick={onHair} style={{ padding: "4px 7px", borderRadius: 8 }}>
+        <div className="flex items-center gap-1">
+          <Scissors size={12} color={status.hairDayDone && status.hairNightDone ? C.resolve : C.faint} />
+          <CarePip on={status.hairDayDone} />
+          <CarePip on={status.hairNightDone} />
+        </div>
+      </Touchable>
+      <Touchable onClick={onSkin} style={{ padding: "4px 7px", borderRadius: 8 }}>
+        <div className="flex items-center gap-1">
+          <Droplets size={12} color={status.amDone && status.pmDone ? C.resolve : C.faint} />
+          <CarePip on={status.amDone} />
+          <CarePip on={status.pmDone} />
+        </div>
+      </Touchable>
+    </div>
+  );
+}
+
+function ResolveTab({ s, effective, set, locked, wealth, care }) {
+  const readOnly = useContext(ReadOnlyContext);
+  const [skinTick, setSkinTick] = useState(0);
+  const [hairTick, setHairTick] = useState(0);
   const eff = effective || s;
   const score = resolveScore(eff);
   const [viewDate, setViewDate] = useState(() => {
@@ -3284,10 +3453,20 @@ function ResolveTab({ s, effective, set, locked, wealth }) {
   const weeklyEarned = Object.values(s.weeklyLogs).reduce((sum, w) => sum + (w.laundry ? 1 : 0) + (w.iron ? 1 : 0), 0);
   const months = ["August", "September", "October"];
 
+  // Hair/Skin cards are hidden for read-only sessions (like Diet/Planner detail).
+  const showCare = !readOnly;
+  // Tile tap: open that card and scroll it into view.
+  const openCare = (which) => {
+    (which === "skin" ? setSkinTick : setHairTick)((n) => n + 1);
+    setTimeout(() => document.getElementById(`care-${which}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+  };
+
   return (
     <div className="pb-4">
       <ScreenHeader title="Resolve" sub="Consistency, discipline and self-control." color={C.resolve} score={score} />
+      {showCare && <CareOverviewTiles care={care} onSkin={() => openCare("skin")} onHair={() => openCare("hair")} />}
       <LockWrap locked={locked} color={C.resolve}>
+        {showCare && <CareCards care={care} dateKey={key} idx={idx} weekNum={weekNum} shiftDay={shiftDay} set={set} skinOpen={skinTick} hairOpen={hairTick} />}
         <Mission title="Daily Missions" points={72.8} earned={dailyEarned} color={C.resolve} defaultOpen>
           <div className="flex items-center justify-between mb-3">
             <Touchable onClick={() => shiftDay(-1)} style={{ color: C.onSurfaceVariant, width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -3315,6 +3494,11 @@ function ResolveTab({ s, effective, set, locked, wealth }) {
                   })}
                 />
                 <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>{label} (0.2)</span>
+                {k === "hair" && !readOnly && (
+                  <span style={{ fontFamily: mono, fontSize: 9.5, color: C.faint, background: C.containerHigh, borderRadius: 6, padding: "1px 6px", marginLeft: 2 }}>
+                    auto from Hair tab
+                  </span>
+                )}
                 {k === "wake" && wakeLeaveCovered && (
                   <span style={{
                     fontFamily: mono, fontSize: 9.5, color: wakeLeaveFree ? C.faint : C.danger,
@@ -4810,7 +4994,10 @@ function calDayStatus(state, ds) {
     ? RESOLVE_DAILY_ITEMS.filter(([k]) => rlog[k]).length / RESOLVE_DAILY_ITEMS.length
     : 0;
 
-  return { dietFrac, dietGrams, vitalityFrac, resolveFrac };
+  const cc = careCounts(state.care, ds);
+  const careFrac = (cc.am + cc.pm + cc.hDay + cc.hNight) / (CARE_SKIN_TOTAL + CARE_HAIR_TOTAL);
+
+  return { dietFrac, dietGrams, vitalityFrac, resolveFrac, careFrac };
 }
 
 function LegendDot({ color, label }) {
@@ -4891,6 +5078,7 @@ function CalendarDropdown({ label, color, children }) {
 }
 
 function CalendarTab({ state, set }) {
+  const careHidden = useContext(ReadOnlyContext); // hair/skin hidden for read-only, like Diet/Planner detail
   const today = dateOnly(new Date());
   const defaultMonthIdx = (() => {
     const i = CAL_MONTHS.findIndex((m) => today.getFullYear() === m.year && today.getMonth() === m.month);
@@ -4969,6 +5157,7 @@ function CalendarTab({ state, set }) {
             </div>
             <LegendDot color={C.vitality} label="Vitality" />
             <LegendDot color={C.resolve} label="Resolve" />
+            {!careHidden && <LegendDot color={C.accent} label="Care" />}
           </div>
 
           <div className="mx-4" style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 16, padding: 12 }}>
@@ -5006,6 +5195,7 @@ function CalendarTab({ state, set }) {
                     <div className="flex items-center gap-[2px]">
                       <StatusDot frac={status?.vitalityFrac} color={C.vitality} />
                       <StatusDot frac={status?.resolveFrac} color={C.resolve} />
+                      {!careHidden && <StatusDot frac={status?.careFrac} color={C.accent} />}
                     </div>
                   </Touchable>
                 );
@@ -5087,6 +5277,7 @@ function CalendarDayDetail({ date, state, set }) {
   const idx = dayIndex(d);
   const weekNum = clamp(Math.ceil(idx / 7), 1, 13);
   const label = d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  const cc = careCounts(state.care, date);
 
   const plans = state.diet.plans || [];
   const dlog = state.diet.logs[date] || { planId: null, completed: {} };
@@ -5225,6 +5416,22 @@ function CalendarDayDetail({ date, state, set }) {
           ))}
         </div>
       </Mission>
+
+      {!readOnly && (
+        <Mission title="Skin & hair" rightLabel={`${cc.am + cc.pm + cc.hDay + cc.hNight}/${CARE_SKIN_TOTAL + CARE_HAIR_TOTAL}`} color={C.accent}>
+          {[["SKIN · MORNING", "skin", SKIN_AM_STEPS], ["SKIN · NIGHT", "skin", SKIN_PM_STEPS], ["HAIR · DAY", "hair", HAIR_DAY_STEPS], ["HAIR · NIGHT", "hair", HAIR_NIGHT_STEPS]].map(([title, group, steps]) => (
+            <div key={title}>
+              <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, letterSpacing: 0.5, marginTop: 6 }}>{title}</div>
+              {steps.map(([k, lbl]) => (
+                <label key={k} className="flex items-center gap-1">
+                  <Check2 checked={!!state.care?.[group]?.logs?.[date]?.[k]} color={C.accent} onClick={() => set((dr) => applyCareToggle(dr, date, group, k))} />
+                  <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>{lbl}</span>
+                </label>
+              ))}
+            </div>
+          ))}
+        </Mission>
+      )}
     </div>
   );
 }
@@ -6039,7 +6246,7 @@ function TopAppBar({ syncStatus, onMenu, mode, onToggleTheme, readOnly, onQuoteC
 /* ---------------------------------------------------------------
    BOTTOM NAVIGATION — HUD nav bar with glow underline on active tab
 --------------------------------------------------------------- */
-function BottomNav({ tab, setTab, tabs }) {
+function BottomNav({ tab, setTab, tabs, badges = {} }) {
   return (
     <div style={{ flexShrink: 0, padding: "0 12px 12px", background: C.surface }}>
       <div
@@ -6059,7 +6266,7 @@ function BottomNav({ tab, setTab, tabs }) {
               <div className="w-full flex flex-col items-center justify-center gap-0.5">
                 <div
                   style={{
-                    padding: "3px 16px", borderRadius: 8,
+                    position: "relative", padding: "3px 16px", borderRadius: 8,
                     background: active ? `${mix(t.color, 13)}` : "transparent",
                     boxShadow: active ? `0 0 10px ${mix(t.color, 27)}` : "none",
                     transition: "background 0.15s ease",
@@ -6067,6 +6274,9 @@ function BottomNav({ tab, setTab, tabs }) {
                   }}
                 >
                   <Icon size={19} color={active ? t.color : C.onSurfaceVariant} />
+                  {badges[t.id] && (
+                    <span style={{ position: "absolute", top: 1, right: 11, width: 8, height: 8, borderRadius: "50%", background: C.danger, border: `1.5px solid ${C.containerHigh}` }} />
+                  )}
                 </div>
                 <span style={{ fontFamily: sans, fontSize: 10, fontWeight: active ? 700 : 500, color: active ? t.color : C.faint }}>
                   {t.label}
@@ -6803,6 +7013,29 @@ export default function LifeRPG() {
   const todayPlannerTasks = state.planner?.days?.[todayKey] || [];
   const todayPlannerRemaining = todayPlannerTasks.filter((t) => !t.completed).length;
 
+  // Pending-today dots on the bottom nav (red dot = something left for today).
+  // Only daily things count — weekly/monthly missions (laundry, arm/ab, wealth,
+  // wisdom books) don't, since they aren't due on any particular day.
+  // Evening items (brush teeth, night skincare, night hair step) only count from 6 PM,
+  // so Resolve isn't lit all day.
+  const careToday = careStatus(state.care, todayKey);
+  const rawDayIdx = dayIndex(today);
+  const inQuestRange = rawDayIdx >= 1 && rawDayIdx <= TOTAL_DAYS;
+  const rlogToday = state.resolve.dailyLogs[todayKey] || {};
+  const eveningNow = new Date().getHours() >= 18;
+  const resolveDailyPending = inQuestRange && (!rlogToday.wake || !rlogToday.plan || !rlogToday.hair || (eveningNow && !rlogToday.teeth));
+  const carePending = !careToday.hairDayDone || !careToday.amDone || (eveningNow && (!careToday.hairNightDone || !careToday.pmDone));
+  const mtPendingToday = inQuestRange && today.getDay() !== 0 && today.getDay() !== 6 && MT_DATES.includes(todayKey) && !state.vitality.muayThai?.[todayKey];
+  const gymSchedToday = state.vitality.gym?.schedules?.find((sc) => sc.active);
+  const gymPlannedToday = gymSchedToday ? gymSchedToday.days?.[gymTodayKey()] : null;
+  const gymLogToday = state.vitality.gym?.logs?.[todayKey];
+  const gymPendingToday = !!gymPlannedToday && !gymPlannedToday.muscles?.includes("Rest")
+    && !(gymLogToday && (gymLogToday.skipped || (gymLogToday.exercises || []).every((e) => e.sets.length > 0 && e.sets.every((x) => x.completed))));
+  const navBadges = readOnly ? {} : {
+    resolve: resolveDailyPending || carePending,
+    vitality: mtPendingToday || gymPendingToday,
+  };
+
   // Rank-tinted theme: the same rank color that colors the name card's
   // badge/glow is also pushed down as the app-wide --accent/--glow, so the
   // whole UI's accent shifts as the player's overall rank climbs.
@@ -7304,6 +7537,13 @@ export default function LifeRPG() {
         <QuestStrip today={today} compact={tab !== "dashboard"} />
         <div className="px-4 pb-1 flex items-center justify-between" style={{ flexShrink: 0 }}>
           <span style={{ fontFamily: mono, color: C.faint, fontSize: 11 }}>Day {idx} / 91</span>
+          {!readOnly && (
+            <CareDots
+              status={careToday}
+              onHair={() => setTab("resolve")}
+              onSkin={() => setTab("resolve")}
+            />
+          )}
           <span style={{ fontFamily: mono, color: C.faint, fontSize: 11 }}>Week {currentWeek}</span>
         </div>
 
@@ -7360,7 +7600,7 @@ export default function LifeRPG() {
           {tab === "vitality" && <VitalityTab s={state.vitality} effective={effVitality} set={update} locked={questLocked} onOpenProgress={() => setTab("progress")} />}
           {tab === "progress" && <ProgressTab gym={state.vitality.gym} />}
           {tab === "wealth" && <WealthTab s={state.wealth} set={update} locked={questLocked} />}
-          {tab === "resolve" && <ResolveTab s={state.resolve} effective={effResolve} set={update} locked={questLocked} wealth={state.wealth} />}
+          {tab === "resolve" && <ResolveTab s={state.resolve} effective={effResolve} set={update} locked={questLocked} wealth={state.wealth} care={state.care} />}
           {tab === "achievements" && <AchievementsTab state={achieveState} overall={overall} />}
           {tab === "diet" && <DietTab s={state.diet} set={update} />}
           {tab === "planner" && (readOnly ? <RestrictedTab label="Planner" /> : <PlannerTab s={state.planner} set={update} />)}
@@ -7399,7 +7639,7 @@ export default function LifeRPG() {
         </div>
 
         <QuoteSheet open={quoteOpen} onClose={() => setQuoteOpen(false)} today={today} rankColor={rankTint} prevRankColor={prevRankTint} starPalette={starPalette} />
-        <BottomNav tab={tab} setTab={setTab} tabs={tabs.filter((t) => t.id !== "achievements" && t.id !== "diet" && t.id !== "planner" && t.id !== "calendar" && t.id !== "progress")} />
+        <BottomNav tab={tab} setTab={setTab} tabs={tabs.filter((t) => t.id !== "achievements" && t.id !== "diet" && t.id !== "planner" && t.id !== "calendar" && t.id !== "progress")} badges={navBadges} />
       </div>
     </div>
     </ReadOnlyContext.Provider>
