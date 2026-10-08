@@ -5521,39 +5521,46 @@ function SwipeRow({ done, color, onToggle, children, mb = 0 }) {
   const [dx, setDx] = useState(0);
   const [dragging, setDragging] = useState(false);
   const st = useRef(null);
+  const dxRef = useRef(0);      // live offset, so end() never reads a stale render value
   const width = useRef(300);
   const ref = useRef(null);
   const dir = done ? -1 : 1;
   const th = () => Math.max(80, width.current * 0.35);
+  const setOffset = (v) => { dxRef.current = v; setDx(v); };
+  const reset = () => { st.current = null; dxRef.current = 0; setDragging(false); setDx(0); };
   const down = (e) => {
     if (readOnly || e.target.closest?.("input,textarea,select")) return;
-    st.current = { x: e.clientX, active: false, id: e.pointerId };
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    st.current = { x: e.clientX, y: e.clientY, active: false, id: e.pointerId };
     width.current = ref.current?.offsetWidth || 300;
   };
   const move = (e) => {
     const s0 = st.current;
-    if (!s0) return;
-    const raw = e.clientX - s0.x;
+    if (!s0 || e.pointerId !== s0.id) return;
+    const rawX = e.clientX - s0.x;
+    const rawY = e.clientY - s0.y;
     if (!s0.active) {
-      if (Math.abs(raw) < 8) return;
+      if (Math.abs(rawX) < 6 && Math.abs(rawY) < 6) return;
+      // Vertical intent (or wrong direction): hand the gesture back to scrolling.
+      if (Math.abs(rawY) > Math.abs(rawX) || (dir > 0 ? rawX < 0 : rawX > 0)) { st.current = null; return; }
       s0.active = true;
       setDragging(true);
-      e.currentTarget.setPointerCapture?.(s0.id);
+      try { e.currentTarget.setPointerCapture?.(s0.id); } catch (_) {}
     }
-    setDx(dir > 0 ? clamp(raw, 0, width.current) : clamp(raw, -width.current, 0));
+    setOffset(dir > 0 ? clamp(rawX, 0, width.current) : clamp(rawX, -width.current, 0));
   };
-  const end = () => {
+  const end = (e) => {
     const s0 = st.current;
-    st.current = null;
-    if (!s0 || !s0.active) return;
-    setDragging(false);
-    const fire = Math.abs(dx) > th();
-    setDx(0);
+    if (!s0) return;
+    if (e && e.pointerId != null && e.pointerId !== s0.id) return;
+    const wasActive = s0.active;
+    const fire = wasActive && e?.type === "pointerup" && Math.abs(dxRef.current) > th();
+    reset();
     if (fire) onToggle();
   };
   const progress = clamp(Math.abs(dx) / th(), 0, 1);
   return (
-    <div ref={ref} style={{ position: "relative", borderRadius: 12, overflow: "hidden", marginBottom: mb }}>
+    <div ref={ref} style={{ position: "relative", borderRadius: 12, overflow: "hidden", marginBottom: mb, touchAction: "pan-y" }}>
       <div
         className="flex items-center"
         style={{
@@ -5569,7 +5576,8 @@ function SwipeRow({ done, color, onToggle, children, mb = 0 }) {
         onPointerUp={end}
         onPointerCancel={end}
         onLostPointerCapture={end}
-        style={{ position: "relative", transform: `translateX(${dx}px)`, transition: dragging ? "none" : "transform 0.2s ease", touchAction: "pan-y", userSelect: "none" }}
+        onDragStart={(e) => e.preventDefault()}
+        style={{ position: "relative", transform: `translateX(${dx}px)`, transition: dragging ? "none" : "transform 0.2s ease", touchAction: "pan-y", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
       >
         {children}
       </div>
