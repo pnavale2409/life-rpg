@@ -5538,7 +5538,7 @@ function SwipeRow({ done, color, onToggle, children, mb = 0 }) {
       if (Math.abs(raw) < 8) return;
       s0.active = true;
       setDragging(true);
-      ref.current?.setPointerCapture?.(s0.id);
+      e.currentTarget.setPointerCapture?.(s0.id);
     }
     setDx(dir > 0 ? clamp(raw, 0, width.current) : clamp(raw, -width.current, 0));
   };
@@ -5568,7 +5568,8 @@ function SwipeRow({ done, color, onToggle, children, mb = 0 }) {
         onPointerMove={move}
         onPointerUp={end}
         onPointerCancel={end}
-        style={{ position: "relative", transform: `translateX(${dx}px)`, transition: dragging ? "none" : "transform 0.2s ease", touchAction: "pan-y" }}
+        onLostPointerCapture={end}
+        style={{ position: "relative", transform: `translateX(${dx}px)`, transition: dragging ? "none" : "transform 0.2s ease", touchAction: "pan-y", userSelect: "none" }}
       >
         {children}
       </div>
@@ -5646,6 +5647,7 @@ function SwipeCard({ title, sub, color, onComplete, onTap, onSwipeLeft, tag, dis
         onPointerMove={move}
         onPointerUp={end}
         onPointerCancel={end}
+        onLostPointerCapture={end}
         onClick={() => { if (!moved.current) onTap?.(); }}
         className="flex items-center gap-3"
         style={{
