@@ -12,7 +12,7 @@ import {
   Utensils, ListTodo, ArrowRightToLine, Pencil, Users, UserPlus, History,
   Briefcase, Plane, Tag, EyeOff, Eye,
   Rocket, TrendingUp, Building2, Shuffle, Gem, Globe,
-  Star, X, CalendarDays, Weight, Repeat, Timer, Award, Scissors, Droplets,
+  Star, X, CalendarDays, Weight, Repeat, Timer, Award, Scissors, Droplets, Sunrise, ClipboardList, Swords,
 } from "lucide-react";
 
 const SYNC_ENABLED = true;
@@ -321,8 +321,8 @@ function rankInfo(totalXP) {
    only works with concrete hex — CSS var() references can't take a
    trailing alpha suffix like that. */
 const RANK_COLORS = {
-  dark: { E: "#8A93B8", D: "#4ADE80", C: "#4F8EFF", B: "#FB6F92", A: "#FF9F45", S: "#FF4D67", SS: "#F5FAFF" },
-  light: { E: "#6E7997", D: "#16A34A", C: "#2F6FEF", B: "#BE185D", A: "#C05F0F", S: "#9F1239", SS: "#111827" },
+  dark: { E: "#8A93B8", D: "#4ADE80", C: "#4F8EFF", B: "#FB6F92", A: "#FF9F45", S: "#6D7CFF", SS: "#F5FAFF" },
+  light: { E: "#6E7997", D: "#16A34A", C: "#2F6FEF", B: "#BE185D", A: "#C05F0F", S: "#6D7CFF", SS: "#111827" },
 };
 function rankColor(rank, mode) {
   return (RANK_COLORS[mode] || RANK_COLORS.dark)[rank] || (RANK_COLORS[mode] || RANK_COLORS.dark).C;
@@ -1788,6 +1788,12 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
               </div>
             )}
           </div>
+          {plannedDay.exercises.length === 0 && (
+            <Touchable writeAction onClick={startDay} style={{ border: `1px solid ${C.outlineVariant}`, borderRadius: 10, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              <Plus size={14} color={C.onSurfaceVariant} />
+              <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 12.5 }}>Do an extra workout</span>
+            </Touchable>
+          )}
           {plannedDay.exercises.length > 0 && (
             <div className="flex items-center gap-2">
               <Touchable writeAction onClick={startDay} style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
@@ -1819,16 +1825,16 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
               ))}
             </div>
           )}
-          {plannedDay?.exercises.length > 0 && (
+          {(plannedDay?.exercises.length > 0 || (plannedDay && (log.extras || []).length === 0)) && (
             <Touchable writeAction onClick={resetDay} style={{ marginTop: 10, borderRadius: 10, padding: "9px 0", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
               <RotateCcw size={13} color={C.onSurfaceVariant} />
-              <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 12.5 }}>Reset</span>
+              <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 12.5 }}>{plannedDay?.exercises.length > 0 ? "Reset" : "Cancel extra workout"}</span>
             </Touchable>
           )}
         </div>
       )}
 
-      {log && !log.skipped && <ExtraExercises date={viewDate} log={log} update={update} gym={gym} />}
+      {log && !log.skipped && <ExtraExercises date={viewDate} log={log} update={update} gym={gym} autoOpen={plannedDay?.exercises.length === 0} />}
     </div>
   );
 }
@@ -1864,7 +1870,15 @@ function CatchUpSection({ gym, update }) {
   const markComplete = (catchupId) => {
     update((d) => {
       const c = d.catchups.find((c) => c.id === catchupId);
-      if (c) { c.done = true; c.completedDate = fmtDate(new Date()); }
+      if (!c) return;
+      // Progress only counts ticked sets. Pressing Mark Complete means the
+      // workout was done, so any exercise with no ticked set gets all of its
+      // sets ticked (exercises where you already ticked some are left alone).
+      c.exercises.forEach((ex) => {
+        if (!ex.sets.some((s) => s.completed)) ex.sets.forEach((s) => { s.completed = true; });
+      });
+      c.done = true;
+      c.completedDate = fmtDate(new Date());
     });
     setOpenId(null);
   };
@@ -1930,8 +1944,8 @@ function CatchUpSection({ gym, update }) {
 /* Per-day "extra" exercise log — same idea as Diet's Extra section: things
    you did outside the schedule for this one day only, stored inside that
    day's log so it never touches the schedule template. */
-function ExtraExercises({ date, log, update, gym }) {
-  const [adding, setAdding] = useState(false);
+function ExtraExercises({ date, log, update, gym, autoOpen = false }) {
+  const [adding, setAdding] = useState(autoOpen && (log.extras || []).length === 0); // rest days open the add form straight away
   const [mode, setMode] = useState(gym.exercises.length > 0 ? "existing" : "new");
   const [existingMuscle, setExistingMuscle] = useState("All muscles");
   const [selectedId, setSelectedId] = useState("");
@@ -3300,113 +3314,87 @@ function WealthTab({ s, set, locked }) {
 --------------------------------------------------------------- */
 /* Resolve overview: two tiles (Skin, Hair), each showing today's AM and PM
    step counts. Unscored. */
-function CareTile({ label, am, pm, solid = false, onClick }) {
+function CareTile({ label, am, pm, solid = false, isOpen = false, onClick }) {
+  const fg = solid ? "#fff" : C.onSurface;
+  const head = solid ? mix("#fff", 75) : C.accent;
+  const Chev = isOpen ? ChevronUp : ChevronDown;
+  const seg = (name, [done, total]) => (
+    <div style={{ flex: 1, textAlign: "center", fontFamily: mono, fontSize: 11.5, fontWeight: 600, color: fg, whiteSpace: "nowrap" }}>
+      <span style={{ fontSize: 10, opacity: 0.7 }}>{name}</span> {done}/{total}
+    </div>
+  );
   return (
     <Touchable
       onClick={onClick}
       style={{
-        position: "relative", overflow: "hidden", display: "block", borderRadius: 12, padding: "8px 12px", minWidth: 0,
+        position: "relative", overflow: "hidden", display: "block", borderRadius: 12, padding: "8px 6px", minWidth: 0,
         background: solid ? `linear-gradient(150deg, ${mix(C.accent, 72)}, ${mix(C.accent, 44)})` : C.container,
-        border: `1px solid ${solid ? mix(C.accent, 80) : mix(C.accent, 55)}`,
+        border: `1px solid ${solid ? mix(C.accent, 80) : mix(C.accent, isOpen ? 80 : 55)}`,
         boxShadow: solid ? `0 4px 18px ${mix(C.accent, 44)}` : "none",
       }}
     >
-      <div style={{ fontFamily: sans, fontWeight: 700, fontSize: 10, letterSpacing: 0.5, color: solid ? mix("#fff", 75) : C.accent }}>{label}</div>
-      <div style={{ fontFamily: mono, fontSize: 11.5, fontWeight: 600, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: solid ? "#fff" : C.onSurface }}>
-        AM {am[0]}/{am[1]} · PM {pm[0]}/{pm[1]}
+      <div className="flex items-center justify-between" style={{ padding: "0 6px 0 14px", fontFamily: sans, fontWeight: 700, fontSize: 10, letterSpacing: 0.5, color: head }}>
+        <span>{label}</span>
+        <Chev size={13} color={head} />
+      </div>
+      <div className="flex items-center" style={{ marginTop: 5 }}>
+        {seg("AM", am)}
+        <div style={{ width: 1, height: 14, background: solid ? mix("#fff", 35) : mix(C.accent, 45) }} />
+        {seg("PM", pm)}
       </div>
     </Touchable>
   );
 }
 
-function CareOverviewTiles({ care, onSkin, onHair }) {
+function CareOverviewTiles({ care, open, onToggle }) {
   const c = careCounts(care, fmtDate(new Date()));
   return (
     <div className="mx-4 mb-3" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-      <CareTile solid label="SKIN" onClick={onSkin} am={[c.am, SKIN_AM_STEPS.length]} pm={[c.pm, SKIN_PM_STEPS.length]} />
-      <CareTile label="HAIR" onClick={onHair} am={[c.hDay, HAIR_DAY_STEPS.length]} pm={[c.hNight, HAIR_NIGHT_STEPS.length]} />
+      <CareTile solid label="SKIN" isOpen={open === "skin"} onClick={() => onToggle("skin")} am={[c.am, SKIN_AM_STEPS.length]} pm={[c.pm, SKIN_PM_STEPS.length]} />
+      <CareTile label="HAIR" isOpen={open === "hair"} onClick={() => onToggle("hair")} am={[c.hDay, HAIR_DAY_STEPS.length]} pm={[c.hNight, HAIR_NIGHT_STEPS.length]} />
     </div>
   );
 }
 
-/* Skin care + Hair care cards (collapsible, like Vitality's Workout card).
-   Unscored, except that finishing every hair step ticks the scored "Hair care
-   routine" mission. Dates follow the Daily Missions day stepper. */
-function CareCards({ care, dateKey, idx, weekNum, shiftDay, set, skinOpen, hairOpen }) {
+/* Dropdown under the Skin/Hair tiles: the day's step checklist. Unscored,
+   except that finishing every hair step ticks the scored "Hair care routine"
+   mission. The date follows the Daily Missions day stepper. */
+function CareDropdown({ which, care, dateKey, idx, weekNum, shiftDay, set }) {
   const color = C.accent;
-  const hairLog = care?.hair?.logs?.[dateKey] || {};
-  const skinLog = care?.skin?.logs?.[dateKey] || {};
-  const c = careCounts(care, dateKey);
-  const toggle = (group, k) => set((d) => applyCareToggle(d, dateKey, group, k));
-  const row = (group, log, k, label) => (
-    <label key={k} className="flex items-center gap-1">
-      <Check2 checked={!!log[k]} color={color} onClick={() => toggle(group, k)} />
-      <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>{label}</span>
-    </label>
-  );
-  const sub = (t) => <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, letterSpacing: 0.5, marginTop: 6 }}>{t}</div>;
-  const stepper = (
-    <div className="flex items-center justify-between mb-1">
-      <Touchable onClick={() => shiftDay(-1)} style={{ color: C.onSurfaceVariant, width: 32, height: 32, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <ChevronLeft size={16} />
-      </Touchable>
-      <div style={{ fontFamily: mono, color: C.faint, fontSize: 10.5 }}>Day {clamp(idx, 1, 91)} · Week {weekNum} · {dateKey}</div>
-      <Touchable onClick={() => shiftDay(1)} style={{ color: C.onSurfaceVariant, width: 32, height: 32, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <ChevronRight size={16} />
-      </Touchable>
-    </div>
+  const log = care?.[which]?.logs?.[dateKey] || {};
+  const sections = which === "skin"
+    ? [["MORNING", SKIN_AM_STEPS], ["NIGHT", SKIN_PM_STEPS]]
+    : [["DAY", HAIR_DAY_STEPS], ["NIGHT", HAIR_NIGHT_STEPS]];
+  const arrow = (dir, Icon) => (
+    <Touchable onClick={() => shiftDay(dir)} style={{ color: C.onSurfaceVariant, width: 32, height: 32, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <Icon size={16} />
+    </Touchable>
   );
   return (
-    <>
-      <Mission anchorId="care-skin" forceOpen={skinOpen} title="Skin care" rightLabel={`${c.am + c.pm}/${CARE_SKIN_TOTAL}`} color={color} emphasized>
-        {stepper}
-        {sub("MORNING")}
-        {SKIN_AM_STEPS.map(([k, l]) => row("skin", skinLog, k, l))}
-        {sub("NIGHT")}
-        {SKIN_PM_STEPS.map(([k, l]) => row("skin", skinLog, k, l))}
-      </Mission>
-      <Mission anchorId="care-hair" forceOpen={hairOpen} title="Hair care" rightLabel={`${c.hDay + c.hNight}/${CARE_HAIR_TOTAL}`} color={color} emphasized>
-        {stepper}
-        {sub("DAY")}
-        {HAIR_DAY_STEPS.map(([k, l]) => row("hair", hairLog, k, l))}
-        {sub("NIGHT")}
-        {HAIR_NIGHT_STEPS.map(([k, l]) => row("hair", hairLog, k, l))}
-      </Mission>
-    </>
-  );
-}
-
-function CarePip({ on }) {
-  return <span style={{ width: 6, height: 6, borderRadius: "50%", display: "inline-block", background: on ? C.resolve : "transparent", border: `1.5px solid ${on ? C.resolve : C.faint}` }} />;
-}
-
-/* Home reminder: tiny hair + skin status in the Day/Week line. Filled pips
-   = done today (skin has a morning and a night pip). Tap to open that view. */
-function CareDots({ status, onHair, onSkin }) {
-  return (
-    <div className="flex items-center gap-0.5">
-      <Touchable onClick={onHair} style={{ padding: "4px 7px", borderRadius: 8 }}>
-        <div className="flex items-center gap-1">
-          <Scissors size={12} color={status.hairDayDone && status.hairNightDone ? C.resolve : C.faint} />
-          <CarePip on={status.hairDayDone} />
-          <CarePip on={status.hairNightDone} />
+    <div className="mx-4 mb-3 px-3 pb-3 pt-1" style={{ background: C.containerHigh, border: `1px solid ${mix(C.accent, 55)}`, borderRadius: 12 }}>
+      <div className="flex items-center justify-between mb-1">
+        {arrow(-1, ChevronLeft)}
+        <div style={{ fontFamily: mono, color: C.faint, fontSize: 10.5 }}>{which === "skin" ? "Skin" : "Hair"} · Day {clamp(idx, 1, 91)} · Week {weekNum} · {dateKey}</div>
+        {arrow(1, ChevronRight)}
+      </div>
+      {sections.map(([title, steps]) => (
+        <div key={title}>
+          <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, letterSpacing: 0.5, marginTop: 6 }}>{title}</div>
+          {steps.map(([k, label]) => (
+            <SwipeRow key={k} done={!!log[k]} color={color} mb={6} onToggle={() => set((d) => applyCareToggle(d, dateKey, which, k))}>
+              <div style={swipeCardStyle(!!log[k], color)}>
+                <span style={{ color: log[k] ? C.faint : C.onSurfaceVariant, fontSize: 13, textDecoration: log[k] ? "line-through" : "none" }}>{label}</span>
+              </div>
+            </SwipeRow>
+          ))}
         </div>
-      </Touchable>
-      <Touchable onClick={onSkin} style={{ padding: "4px 7px", borderRadius: 8 }}>
-        <div className="flex items-center gap-1">
-          <Droplets size={12} color={status.amDone && status.pmDone ? C.resolve : C.faint} />
-          <CarePip on={status.amDone} />
-          <CarePip on={status.pmDone} />
-        </div>
-      </Touchable>
+      ))}
     </div>
   );
 }
 
-function ResolveTab({ s, effective, set, locked, wealth, care }) {
+function ResolveTab({ s, effective, set, locked, wealth, care, careOpen, setCareOpen }) {
   const readOnly = useContext(ReadOnlyContext);
-  const [skinTick, setSkinTick] = useState(0);
-  const [hairTick, setHairTick] = useState(0);
   const eff = effective || s;
   const score = resolveScore(eff);
   const [viewDate, setViewDate] = useState(() => {
@@ -3453,20 +3441,14 @@ function ResolveTab({ s, effective, set, locked, wealth, care }) {
   const weeklyEarned = Object.values(s.weeklyLogs).reduce((sum, w) => sum + (w.laundry ? 1 : 0) + (w.iron ? 1 : 0), 0);
   const months = ["August", "September", "October"];
 
-  // Hair/Skin cards are hidden for read-only sessions (like Diet/Planner detail).
-  const showCare = !readOnly;
-  // Tile tap: open that card and scroll it into view.
-  const openCare = (which) => {
-    (which === "skin" ? setSkinTick : setHairTick)((n) => n + 1);
-    setTimeout(() => document.getElementById(`care-${which}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
-  };
+  const toggleCare = (which) => setCareOpen((o) => (o === which ? null : which));
 
   return (
     <div className="pb-4">
       <ScreenHeader title="Resolve" sub="Consistency, discipline and self-control." color={C.resolve} score={score} />
-      {showCare && <CareOverviewTiles care={care} onSkin={() => openCare("skin")} onHair={() => openCare("hair")} />}
+      <CareOverviewTiles care={care} open={careOpen} onToggle={toggleCare} />
+      {careOpen && <CareDropdown which={careOpen} care={care} dateKey={key} idx={idx} weekNum={weekNum} shiftDay={shiftDay} set={set} />}
       <LockWrap locked={locked} color={C.resolve}>
-        {showCare && <CareCards care={care} dateKey={key} idx={idx} weekNum={weekNum} shiftDay={shiftDay} set={set} skinOpen={skinTick} hairOpen={hairTick} />}
         <Mission title="Daily Missions" points={72.8} earned={dailyEarned} color={C.resolve} defaultOpen>
           <div className="flex items-center justify-between mb-3">
             <Touchable onClick={() => shiftDay(-1)} style={{ color: C.onSurfaceVariant, width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -3482,21 +3464,24 @@ function ResolveTab({ s, effective, set, locked, wealth, care }) {
               <ChevronRight size={18} />
             </Touchable>
           </div>
+          <SwipeHint />
           <div className="flex flex-col">
             {dailyItems.map(([k, label]) => (
-              <label key={k} className="flex items-center gap-1">
-                <Check2
-                  checked={!!log[k]}
-                  color={C.resolve}
-                  onClick={() => set((d) => {
-                    if (!d.resolve.dailyLogs[key]) d.resolve.dailyLogs[key] = { wake: false, plan: false, hair: false, teeth: false };
-                    d.resolve.dailyLogs[key][k] = !d.resolve.dailyLogs[key][k];
-                  })}
-                />
-                <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>{label} (0.2)</span>
-                {k === "hair" && !readOnly && (
+              <SwipeRow
+                key={k}
+                done={!!log[k]}
+                color={C.resolve}
+                mb={6}
+                onToggle={() => set((d) => {
+                  if (!d.resolve.dailyLogs[key]) d.resolve.dailyLogs[key] = { wake: false, plan: false, hair: false, teeth: false };
+                  d.resolve.dailyLogs[key][k] = !d.resolve.dailyLogs[key][k];
+                })}
+              >
+              <div className="flex items-center gap-1" style={swipeCardStyle(!!log[k], C.resolve)}>
+                <span style={{ color: log[k] ? C.faint : C.onSurfaceVariant, fontSize: 13, textDecoration: log[k] ? "line-through" : "none" }}>{label} (0.2)</span>
+                {k === "hair" && (
                   <span style={{ fontFamily: mono, fontSize: 9.5, color: C.faint, background: C.containerHigh, borderRadius: 6, padding: "1px 6px", marginLeft: 2 }}>
-                    auto from Hair tab
+                    auto from Hair care
                   </span>
                 )}
                 {k === "wake" && wakeLeaveCovered && (
@@ -3507,7 +3492,8 @@ function ResolveTab({ s, effective, set, locked, wealth, care }) {
                     {wakeLeaveFree ? "covered by leave" : "leave used (−1 pt)"}
                   </span>
                 )}
-              </label>
+              </div>
+              </SwipeRow>
             ))}
           </div>
         </Mission>
@@ -3516,28 +3502,23 @@ function ResolveTab({ s, effective, set, locked, wealth, care }) {
           <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 6 }}>
             Week {weekNum} <span style={{ color: C.faint }}>({weekRange(weekNum)})</span>
           </p>
-          <label className="flex items-center gap-1">
-            <Check2
-              checked={!!wlog.laundry}
+          <SwipeHint />
+          {[["laundry", "Laundry (1 pt)"], ["iron", "Iron clothes (1 pt)"]].map(([wk, wLabel]) => (
+            <SwipeRow
+              key={wk}
+              done={!!wlog[wk]}
               color={C.resolve}
-              onClick={() => set((d) => {
+              mb={6}
+              onToggle={() => set((d) => {
                 if (!d.resolve.weeklyLogs[weekNum]) d.resolve.weeklyLogs[weekNum] = { laundry: false, iron: false };
-                d.resolve.weeklyLogs[weekNum].laundry = !d.resolve.weeklyLogs[weekNum].laundry;
+                d.resolve.weeklyLogs[weekNum][wk] = !d.resolve.weeklyLogs[weekNum][wk];
               })}
-            />
-            <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>Laundry (1 pt)</span>
-          </label>
-          <label className="flex items-center gap-1">
-            <Check2
-              checked={!!wlog.iron}
-              color={C.resolve}
-              onClick={() => set((d) => {
-                if (!d.resolve.weeklyLogs[weekNum]) d.resolve.weeklyLogs[weekNum] = { laundry: false, iron: false };
-                d.resolve.weeklyLogs[weekNum].iron = !d.resolve.weeklyLogs[weekNum].iron;
-              })}
-            />
-            <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>Iron clothes (1 pt)</span>
-          </label>
+            >
+              <div style={swipeCardStyle(!!wlog[wk], C.resolve)}>
+                <span style={{ color: wlog[wk] ? C.faint : C.onSurfaceVariant, fontSize: 13, textDecoration: wlog[wk] ? "line-through" : "none" }}>{wLabel}</span>
+              </div>
+            </SwipeRow>
+          ))}
         </Mission>
 
         <Mission title="Bedsheets" points={1.2} earned={s.bedsheets * 0.4} color={C.resolve}>
@@ -3747,24 +3728,23 @@ function BonusTasksMission({ s, set }) {
         )}
       </div>
 
+      {tasks.length > 0 && <SwipeHint />}
       <div className="flex flex-col gap-2">
         {tasks.length === 0 ? (
           <p style={{ color: C.faint, fontSize: 12.5 }}>No bonus tasks yet.</p>
         ) : (
           tasks.map((t) => (
-            <div
+            <SwipeRow
               key={t.id}
-              style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 12, padding: "10px 12px" }}
+              done={!!t.completed}
+              color={C.resolve}
+              onToggle={() => set((d) => {
+                const task = d.resolve.bonusTasks.find((x) => x.id === t.id);
+                if (task) task.completed = !task.completed;
+              })}
             >
+            <div style={swipeCardStyle(!!t.completed, C.resolve, "10px 12px")}>
               <div className="flex items-start gap-2">
-                <Check2
-                  checked={!!t.completed}
-                  color={C.resolve}
-                  onClick={() => set((d) => {
-                    const task = d.resolve.bonusTasks.find((x) => x.id === t.id);
-                    if (task) task.completed = !task.completed;
-                  })}
-                />
                 <div className="flex-1 min-w-0">
                   <span style={{
                     color: t.completed ? C.faint : C.onSurface, fontSize: 13.5, fontWeight: 600,
@@ -3785,6 +3765,7 @@ function BonusTasksMission({ s, set }) {
                 </Touchable>
               </div>
             </div>
+            </SwipeRow>
           ))
         )}
       </div>
@@ -3991,22 +3972,20 @@ function DietTodayCard({ s, set, today, log, plans, activePlan, totalProtein, co
             <p style={{ color: C.faint, fontSize: 12.5 }}>This diet has no items yet — add some below.</p>
           ) : (
             <div className="flex flex-col gap-2">
+              <SwipeHint />
               {activePlan.items.map((item) => {
                 const checked = !!log.completed?.[item.id];
                 return (
-                  <div
+                  <SwipeRow
                     key={item.id}
-                    style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 12, padding: "8px 12px" }}
-                    className="flex items-center gap-2"
+                    done={checked}
+                    color={C.accent}
+                    onToggle={() => set((d) => {
+                      if (!d.diet.logs[today]) d.diet.logs[today] = { planId: activePlan.id, completed: {}, extras: [] };
+                      d.diet.logs[today].completed[item.id] = !d.diet.logs[today].completed[item.id];
+                    })}
                   >
-                    <Check2
-                      checked={checked}
-                      color={C.accent}
-                      onClick={() => set((d) => {
-                        if (!d.diet.logs[today]) d.diet.logs[today] = { planId: activePlan.id, completed: {}, extras: [] };
-                        d.diet.logs[today].completed[item.id] = !d.diet.logs[today].completed[item.id];
-                      })}
-                    />
+                  <div style={swipeCardStyle(checked, C.accent)} className="flex items-center gap-2">
                     <span
                       style={{
                         flex: 1, color: checked ? C.faint : C.onSurface, fontFamily: sans, fontSize: 13.5,
@@ -4017,6 +3996,7 @@ function DietTodayCard({ s, set, today, log, plans, activePlan, totalProtein, co
                     </span>
                     <span style={{ color: C.faint, fontFamily: mono, fontSize: 11.5 }}>{item.protein}g</span>
                   </div>
+                  </SwipeRow>
                 );
               })}
             </div>
@@ -4767,17 +4747,14 @@ function DayPlanCard({ set, selected, dayTasks }) {
 
   return (
     <Mission title="Day Plan" points={dayTasks.length} earned={doneCount} color={C.accent} defaultOpen>
+      {dayTasks.length > 0 && <SwipeHint />}
       <div className="flex flex-col gap-2" style={{ marginBottom: 10 }}>
         {dayTasks.length === 0 ? (
           <p style={{ color: C.faint, fontSize: 12.5 }}>No tasks for this day yet — add one below.</p>
         ) : (
           orderedTasks.map((task) => (
-            <div
-              key={task.id}
-              style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 12, padding: "8px 10px" }}
-              className="flex items-center gap-2"
-            >
-              <Check2 checked={task.completed} color={C.accent} onClick={() => toggleTask(task.id)} />
+            <SwipeRow key={task.id} done={!!task.completed} color={C.accent} onToggle={() => toggleTask(task.id)}>
+            <div style={swipeCardStyle(!!task.completed, C.accent, "8px 10px")} className="flex items-center gap-2">
               <span
                 style={{
                   flex: 1, color: task.completed ? C.faint : C.onSurface, fontFamily: sans, fontSize: 13.5,
@@ -4792,6 +4769,7 @@ function DayPlanCard({ set, selected, dayTasks }) {
                 </Touchable>
               )}
             </div>
+            </SwipeRow>
           ))
         )}
       </div>
@@ -5078,7 +5056,6 @@ function CalendarDropdown({ label, color, children }) {
 }
 
 function CalendarTab({ state, set }) {
-  const careHidden = useContext(ReadOnlyContext); // hair/skin hidden for read-only, like Diet/Planner detail
   const today = dateOnly(new Date());
   const defaultMonthIdx = (() => {
     const i = CAL_MONTHS.findIndex((m) => today.getFullYear() === m.year && today.getMonth() === m.month);
@@ -5157,7 +5134,7 @@ function CalendarTab({ state, set }) {
             </div>
             <LegendDot color={C.vitality} label="Vitality" />
             <LegendDot color={C.resolve} label="Resolve" />
-            {!careHidden && <LegendDot color={C.accent} label="Care" />}
+            <LegendDot color={C.accent} label="Care" />
           </div>
 
           <div className="mx-4" style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 16, padding: 12 }}>
@@ -5195,7 +5172,7 @@ function CalendarTab({ state, set }) {
                     <div className="flex items-center gap-[2px]">
                       <StatusDot frac={status?.vitalityFrac} color={C.vitality} />
                       <StatusDot frac={status?.resolveFrac} color={C.resolve} />
-                      {!careHidden && <StatusDot frac={status?.careFrac} color={C.accent} />}
+                      <StatusDot frac={status?.careFrac} color={C.accent} />
                     </div>
                   </Touchable>
                 );
@@ -5417,8 +5394,7 @@ function CalendarDayDetail({ date, state, set }) {
         </div>
       </Mission>
 
-      {!readOnly && (
-        <Mission title="Skin & hair" rightLabel={`${cc.am + cc.pm + cc.hDay + cc.hNight}/${CARE_SKIN_TOTAL + CARE_HAIR_TOTAL}`} color={C.accent}>
+      <Mission title="Skin & hair" rightLabel={`${cc.am + cc.pm + cc.hDay + cc.hNight}/${CARE_SKIN_TOTAL + CARE_HAIR_TOTAL}`} color={C.accent}>
           {[["SKIN · MORNING", "skin", SKIN_AM_STEPS], ["SKIN · NIGHT", "skin", SKIN_PM_STEPS], ["HAIR · DAY", "hair", HAIR_DAY_STEPS], ["HAIR · NIGHT", "hair", HAIR_NIGHT_STEPS]].map(([title, group, steps]) => (
             <div key={title}>
               <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, letterSpacing: 0.5, marginTop: 6 }}>{title}</div>
@@ -5431,7 +5407,6 @@ function CalendarDayDetail({ date, state, set }) {
             </div>
           ))}
         </Mission>
-      )}
     </div>
   );
 }
@@ -5520,7 +5495,182 @@ function CalendarWeeklyCard({ weekNum, state, set }) {
 /* ---------------------------------------------------------------
    TODAY'S QUESTS — HUD checklist card
 --------------------------------------------------------------- */
-function QuestBar({ state, set, today }) {
+/* Card look shared by the swipe-to-complete list rows (done rows get a coloured edge). */
+function swipeCardStyle(done, color, pad = "8px 12px") {
+  return {
+    background: C.containerHigh,
+    border: `1px solid ${done ? mix(color, 40) : C.outlineVariant}`,
+    borderLeft: `3px solid ${done ? color : C.outlineVariant}`,
+    borderRadius: 12, padding: pad,
+  };
+}
+
+function SwipeHint() {
+  const readOnly = useContext(ReadOnlyContext);
+  if (readOnly) return null;
+  return <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, letterSpacing: 0.3, margin: "0 2px 6px" }}>Swipe right to complete · left to undo</div>;
+}
+
+/* Swipe-to-toggle wrapper for list rows that used to have a checkbox. Swipe
+   RIGHT to mark done; once done, swipe LEFT to undo. Pointer capture only
+   starts after a real horizontal drag, so taps on buttons inside the row
+   (delete, etc.) still work. Inert in read-only sessions and when the
+   gesture starts on a text field. */
+function SwipeRow({ done, color, onToggle, children, mb = 0 }) {
+  const readOnly = useContext(ReadOnlyContext);
+  const [dx, setDx] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const st = useRef(null);
+  const width = useRef(300);
+  const ref = useRef(null);
+  const dir = done ? -1 : 1;
+  const th = () => Math.max(80, width.current * 0.35);
+  const down = (e) => {
+    if (readOnly || e.target.closest?.("input,textarea,select")) return;
+    st.current = { x: e.clientX, active: false, id: e.pointerId };
+    width.current = ref.current?.offsetWidth || 300;
+  };
+  const move = (e) => {
+    const s0 = st.current;
+    if (!s0) return;
+    const raw = e.clientX - s0.x;
+    if (!s0.active) {
+      if (Math.abs(raw) < 8) return;
+      s0.active = true;
+      setDragging(true);
+      ref.current?.setPointerCapture?.(s0.id);
+    }
+    setDx(dir > 0 ? clamp(raw, 0, width.current) : clamp(raw, -width.current, 0));
+  };
+  const end = () => {
+    const s0 = st.current;
+    st.current = null;
+    if (!s0 || !s0.active) return;
+    setDragging(false);
+    const fire = Math.abs(dx) > th();
+    setDx(0);
+    if (fire) onToggle();
+  };
+  const progress = clamp(Math.abs(dx) / th(), 0, 1);
+  return (
+    <div ref={ref} style={{ position: "relative", borderRadius: 12, overflow: "hidden", marginBottom: mb }}>
+      <div
+        className="flex items-center"
+        style={{
+          position: "absolute", inset: 0, padding: "0 16px", justifyContent: dir > 0 ? "flex-start" : "flex-end",
+          background: dir > 0 ? mix(color, 24) : mix(C.faint, 22), opacity: dx === 0 ? 0 : 0.35 + 0.65 * progress,
+        }}
+      >
+        <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 12, color: dir > 0 ? color : C.onSurfaceVariant }}>{dir > 0 ? "Done" : "Undo"}</span>
+      </div>
+      <div
+        onPointerDown={down}
+        onPointerMove={move}
+        onPointerUp={end}
+        onPointerCancel={end}
+        style={{ position: "relative", transform: `translateX(${dx}px)`, transition: dragging ? "none" : "transform 0.2s ease", touchAction: "pan-y" }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* Swipe card for the Home quests. Swipe RIGHT past ~40% of the width (or
+   90px) to complete; with `onSwipeLeft`, swipe LEFT to go to the next slide.
+   touch-action: pan-y keeps vertical scrolling working. With `onTap` the card
+   is tappable instead of completable (skin/hair open in Resolve). Completing
+   is disabled in read-only sessions. */
+function SwipeCard({ title, sub, color, onComplete, onTap, onSwipeLeft, tag, disabled }) {
+  const [dx, setDx] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const [gone, setGone] = useState(false);
+  const startX = useRef(null);
+  const moved = useRef(false);
+  const width = useRef(300);
+  const ref = useRef(null);
+  const canRight = !disabled && !onTap && !!onComplete;
+  const canLeft = !!onSwipeLeft;
+  const down = (e) => {
+    if ((!canRight && !canLeft) || gone) return;
+    startX.current = e.clientX;
+    moved.current = false;
+    width.current = ref.current?.offsetWidth || 300;
+    setDragging(true);
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+  const move = (e) => {
+    if (startX.current == null) return;
+    const raw = e.clientX - startX.current;
+    if (Math.abs(raw) > 6) moved.current = true;
+    setDx(clamp(raw, canLeft ? -width.current : 0, canRight ? width.current : 0));
+  };
+  const end = () => {
+    if (startX.current == null) return;
+    startX.current = null;
+    setDragging(false);
+    const th = Math.max(90, width.current * 0.4);
+    if (dx > th && canRight) {
+      setDx(width.current);
+      setGone(true);
+      setTimeout(() => {
+        onComplete();
+        setTimeout(() => { setGone(false); setDx(0); }, 500); // only matters if the write was blocked
+      }, 200);
+    } else if (dx < -th && canLeft) {
+      setDx(-width.current);
+      setGone(true);
+      setTimeout(() => { onSwipeLeft(); setGone(false); setDx(0); }, 180);
+    } else {
+      setDx(0);
+    }
+  };
+  const progress = clamp(Math.abs(dx) / Math.max(90, width.current * 0.4), 0, 1);
+  const left = dx < 0;
+  return (
+    <div style={{ position: "relative", borderRadius: 12, overflow: "hidden", marginBottom: 6 }}>
+      {(canRight || canLeft) && (
+        <div
+          className="flex items-center"
+          style={{
+            position: "absolute", inset: 0, padding: "0 16px", justifyContent: left ? "flex-end" : "flex-start",
+            background: left ? mix(C.faint, 22) : mix(color, 24), opacity: 0.35 + 0.65 * progress,
+          }}
+        >
+          <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 12, color: left ? C.onSurfaceVariant : color }}>{left ? "Next" : "Done"}</span>
+        </div>
+      )}
+      <div
+        ref={ref}
+        onPointerDown={down}
+        onPointerMove={move}
+        onPointerUp={end}
+        onPointerCancel={end}
+        onClick={() => { if (!moved.current) onTap?.(); }}
+        className="flex items-center gap-3"
+        style={{
+          position: "relative", padding: "10px 12px", borderRadius: 12,
+          background: C.container, border: `1px solid ${mix(color, 30)}`, borderLeft: `3px solid ${color}`,
+          transform: `translateX(${dx}px)`, opacity: gone ? 0 : 1,
+          transition: dragging ? "none" : "transform 0.2s ease, opacity 0.2s ease",
+          touchAction: "pan-y", userSelect: "none", cursor: onTap ? "pointer" : canRight || canLeft ? "grab" : "default",
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ color: C.onSurface, fontSize: 13, fontWeight: 600 }}>{title}</div>
+          {sub && <div style={{ fontFamily: mono, fontSize: 10.5, color: C.faint, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>}
+        </div>
+        {tag && <span style={{ fontFamily: mono, fontSize: 10, color: C.faint, whiteSpace: "nowrap" }}>{tag}</span>}
+      </div>
+    </div>
+  );
+}
+
+/* Home quests: a dots strip (taps open a bottom sheet with every quest) and
+   one "next up" card with a row of task labels to pick any daily task. Daily,
+   Weekly and Bonus are all swipe-right-to-complete; skin/hair tasks open in
+   Resolve instead. Evening items (night skin/hair, brush teeth) show from 6 PM. */
+function QuestBar({ state, set, today, onOpenCare }) {
   const idx = dayIndex(today);
   const inRange = idx >= 1 && idx <= TOTAL_DAYS;
   const key = fmtDate(today);
@@ -5531,58 +5681,79 @@ function QuestBar({ state, set, today }) {
   const wd = today.getDay();
   const isWeekday = wd !== 0 && wd !== 6;
   const mtDone = !!state.vitality.muayThai[key];
-  const [open, setOpen] = useState(false);
+  const readOnly = useContext(ReadOnlyContext);
+  const mode = useContext(ThemeModeContext);
+  const [sheet, setSheet] = useState(false);
+  const [slide, setSlide] = useState(0);
+  const [hold, setHold] = useState(false); // finger/pointer down on the slideshow pauses auto-rotate
 
-  const dailyItemDefs = !inRange ? [] : [
-    ["wake", "Wake up by 7:00 AM"],
-    ["plan", "Create the day's plan"],
-    ["hair", "Hair care routine"],
-    ["teeth", "Brush teeth before bed"],
-  ].filter(([k]) => !log[k]);
+  const evening = new Date().getHours() >= 18;
+  const skinLog = state.care?.skin?.logs?.[key] || {};
+  const hairLog = state.care?.hair?.logs?.[key] || {};
+  const stepsDone = (lg, steps) => steps.every(([k]) => lg[k]);
+  const stepNames = (steps) => steps.map(([, l]) => l).join(" · ");
+  const markDaily = (k) => () => set((d) => {
+    if (!d.resolve.dailyLogs[key]) d.resolve.dailyLogs[key] = { wake: false, plan: false, hair: false, teeth: false };
+    d.resolve.dailyLogs[key][k] = true;
+  });
 
-  const weeklyItemDefs = !inRange ? [] : [
-    ["laundry", "Laundry"],
-    ["iron", "Iron clothes"],
-  ].filter(([k]) => !wlog[k]);
-
-  const armSessions = (inRange && state.vitality.armWeeks[weekIdx]) || [];
-  const abSessions = (inRange && state.vitality.abWeeks[weekIdx]) || [];
-  const armPending = armSessions.map((v, si) => ({ v, si })).filter((x) => !x.v);
-  const abPending = abSessions.map((v, si) => ({ v, si })).filter((x) => !x.v);
-  const mtPending = inRange && isWeekday && MT_DATES.includes(key) && !mtDone;
-
-  const daily = [
-    ...(mtPending ? [{ id: "mt", label: "Muay Thai class", color: C.vitality, onClick: () => set((d) => { d.vitality.muayThai[key] = true; }) }] : []),
-    ...dailyItemDefs.map(([k, label]) => ({
-      id: k, label, color: C.resolve,
-      onClick: () => set((d) => {
-        if (!d.resolve.dailyLogs[key]) d.resolve.dailyLogs[key] = { wake: false, plan: false, hair: false, teeth: false };
-        d.resolve.dailyLogs[key][k] = true;
-      }),
-    })),
+  // Every daily task due right now, done or not (done ones become filled dots).
+  // The hair steps drive the scored "Hair care routine" mission, so that
+  // mission has no task of its own.
+  const dailyAll = !inRange ? [] : [
+    { id: "wake", short: "Wake", title: "Wake up by 7:00 AM", sub: "Daily mission", color: C.resolve, done: !!log.wake, onComplete: markDaily("wake") },
+    { id: "plan", short: "Plan", title: "Create the day's plan", sub: "Daily mission", color: C.resolve, done: !!log.plan, onComplete: markDaily("plan") },
+    ...(isWeekday && MT_DATES.includes(key) ? [{ id: "mt", short: "Muay Thai", title: "Muay Thai class", sub: "Today's session", color: C.vitality, done: mtDone, onComplete: () => set((d) => { d.vitality.muayThai[key] = true; }) }] : []),
+    { id: "skin-am", short: "Skin AM", title: "Skin · Morning", sub: stepNames(SKIN_AM_STEPS), color: C.accent, done: stepsDone(skinLog, SKIN_AM_STEPS), open: "skin" },
+    { id: "hair-day", short: "Hair Day", title: "Hair · Day", sub: stepNames(HAIR_DAY_STEPS), color: C.accent, done: !!log.hair || stepsDone(hairLog, HAIR_DAY_STEPS), open: "hair" },
+    ...(evening ? [
+      { id: "skin-pm", short: "Skin PM", title: "Skin · Night", sub: stepNames(SKIN_PM_STEPS), color: C.accent, done: stepsDone(skinLog, SKIN_PM_STEPS), open: "skin" },
+      { id: "hair-night", short: "Hair PM", title: "Hair · Night", sub: stepNames(HAIR_NIGHT_STEPS), color: C.accent, done: !!log.hair || stepsDone(hairLog, HAIR_NIGHT_STEPS), open: "hair" },
+      { id: "teeth", short: "Teeth", title: "Brush teeth before bed", sub: "Daily mission", color: C.resolve, done: !!log.teeth, onComplete: markDaily("teeth") },
+    ] : []),
   ];
+  const daily = dailyAll.filter((t) => !t.done);
 
-  const weekly = [
-    ...weeklyItemDefs.map(([k, label]) => ({
-      id: k, label, color: C.resolve,
-      onClick: () => set((d) => {
+  const weekly = !inRange ? [] : [
+    ...[["laundry", "Laundry"], ["iron", "Iron clothes"]].filter(([k]) => !wlog[k]).map(([k, label]) => ({
+      id: k, title: label, color: C.resolve,
+      onComplete: () => set((d) => {
         if (!d.resolve.weeklyLogs[weekNum]) d.resolve.weeklyLogs[weekNum] = { laundry: false, iron: false };
         d.resolve.weeklyLogs[weekNum][k] = true;
       }),
     })),
-    ...armPending.map(({ si }) => ({ id: `arm-${si}`, label: "Arm Training", color: C.vitality, onClick: () => set((d) => { d.vitality.armWeeks[weekIdx][si] = true; }) })),
-    ...abPending.map(({ si }) => ({ id: `ab-${si}`, label: "Ab Training", color: C.vitality, onClick: () => set((d) => { d.vitality.abWeeks[weekIdx][si] = true; }) })),
+    ...(state.vitality.armWeeks[weekIdx] || []).map((v, si) => ({ v, si })).filter((x) => !x.v)
+      .map(({ si }) => ({ id: `arm-${si}`, title: "Arm Training", color: C.vitality, onComplete: () => set((d) => { d.vitality.armWeeks[weekIdx][si] = true; }) })),
+    ...(state.vitality.abWeeks[weekIdx] || []).map((v, si) => ({ v, si })).filter((x) => !x.v)
+      .map(({ si }) => ({ id: `ab-${si}`, title: "Ab Training", color: C.vitality, onComplete: () => set((d) => { d.vitality.abWeeks[weekIdx][si] = true; }) })),
   ];
 
-  const bonus = (state.resolve.bonusTasks || [])
-    .filter((t) => !t.completed)
-    .map((t) => ({
-      id: t.id, label: t.title, color: C.resolve,
-      onClick: () => set((d) => {
-        const task = d.resolve.bonusTasks.find((x) => x.id === t.id);
-        if (task) task.completed = true;
-      }),
-    }));
+  const bonus = (state.resolve.bonusTasks || []).filter((t) => !t.completed).map((t) => ({
+    id: t.id, title: t.title, color: C.resolve,
+    onComplete: () => set((d) => {
+      const task = d.resolve.bonusTasks.find((x) => x.id === t.id);
+      if (task) task.completed = true;
+    }),
+  }));
+
+  const i = Math.min(slide, Math.max(daily.length - 1, 0));
+  const sel = daily[i];
+
+  // Auto-rotate every 5s. The timer restarts on every slide change (manual or
+  // automatic), and pauses while the pop-up is open or the slideshow is touched.
+  useEffect(() => {
+    if (daily.length < 2 || sheet || hold) return;
+    if (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const t = setTimeout(() => setSlide(i + 1 >= daily.length ? 0 : i + 1), 5000);
+    return () => clearTimeout(t);
+  }, [i, daily.length, sheet, hold]);
+  const cardProps = (t, closeSheet, canNext) => {
+    const nxt = canNext ? "← next" : "";
+    const join = (a, b) => [a, b].filter(Boolean).join(" · ");
+    return t.open
+      ? { title: t.title, sub: t.sub, color: t.color, tag: join(nxt, "open in Resolve"), onTap: () => { closeSheet?.(); onOpenCare(t.open); } }
+      : { title: t.title, sub: t.sub, color: t.color, onComplete: t.onComplete, disabled: readOnly, tag: join(nxt, readOnly ? "" : "done →") };
+  };
 
   const groups = [
     { key: "daily", label: "Daily", color: C.resolve, items: daily },
@@ -5592,71 +5763,97 @@ function QuestBar({ state, set, today }) {
 
   return (
     <div className="mb-3" style={{ background: `linear-gradient(120deg, var(--container-high), var(--container))`, borderRadius: 14, border: `1px solid ${C.outlineVariant}`, overflow: "hidden" }}>
-      <Touchable onClick={() => setOpen((o) => !o)} style={{ display: "block", width: "100%" }}>
-        <div className="flex items-center">
-          {groups.map((g, i) => (
-            <div
-              key={g.key}
-              className="flex-1 flex items-center justify-center gap-1.5"
-              style={{ padding: "8px 4px", borderLeft: i > 0 ? `1px solid ${C.outlineVariant}` : "none" }}
+      <Touchable onClick={() => setSheet(true)} style={{ display: "block", width: "100%" }}>
+        <div className="flex items-center gap-2" style={{ padding: "9px 12px" }}>
+          {[["Daily", daily.length, C.resolve], ["Weekly", weekly.length, C.vitality], ["Bonus", bonus.length, C.wealth]].map(([label, n, col]) => (
+            <span
+              key={label}
+              style={{
+                fontFamily: mono, fontSize: 10.5, fontWeight: 600, whiteSpace: "nowrap", padding: "2px 8px", borderRadius: 999,
+                border: `1px solid ${mix(col, n > 0 ? 45 : 20)}`, background: n > 0 ? mix(col, 14) : "transparent", color: n > 0 ? col : C.faint,
+              }}
             >
-              <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 14, color: g.items.length > 0 ? g.color : C.faint }}>
-                {g.items.length}
-              </span>
-              <span style={{ fontFamily: sans, fontWeight: 500, fontSize: 10.5, color: C.onSurfaceVariant, letterSpacing: 0.2 }}>
-                {g.label}
-              </span>
-            </div>
+              {label} {n}
+            </span>
           ))}
-          <div className="flex items-center" style={{ paddingRight: 10 }}>
-            {open ? <ChevronUp size={13} color={C.faint} /> : <ChevronDown size={13} color={C.faint} />}
-          </div>
+          <span style={{ flex: 1 }} />
+          <ChevronUp size={13} color={C.faint} />
         </div>
       </Touchable>
-      {open && (
-        <div className="px-3 pb-3" style={{ borderTop: `1px solid ${C.outlineVariant}` }}>
-          {groups.map((g) => {
-            const noneMsg = g.key === "bonus" && (state.resolve.bonusTasks || []).length === 0 ? "No bonus tasks yet." : "All done.";
-            return (
-              <div
-                key={g.key}
-                style={{
-                  marginTop: 10, borderRadius: 14, overflow: "hidden",
-                  border: `1px solid ${mix(g.color, 28)}`,
-                  background: `linear-gradient(160deg, ${mix(g.color, 9)}, transparent 75%)`,
-                }}
-              >
-                <div className="flex items-center gap-2" style={{ padding: "8px 12px", background: mix(g.color, 6) }}>
-                  <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 10.5, color: g.color, letterSpacing: 0.5, textTransform: "uppercase" }}>
-                    {g.label}
-                  </span>
-                  <span style={{ marginLeft: "auto", fontFamily: mono, fontSize: 10.5, color: g.items.length > 0 ? g.color : C.faint }}>
-                    {g.items.length > 0 ? `${g.items.length} left` : "clear"}
-                  </span>
+
+      <div
+        onPointerDown={() => setHold(true)}
+        onPointerUp={() => setHold(false)}
+        onPointerCancel={() => setHold(false)}
+        style={{ borderTop: `1px solid ${C.outlineVariant}`, padding: "8px 10px 6px" }}
+      >
+        <style>{"@keyframes qslide{from{opacity:0;transform:translateX(28px)}to{opacity:1;transform:none}}"}</style>
+        {!sel ? (
+          <div style={{ color: C.onSurfaceVariant, fontSize: 12, padding: "2px 2px 4px" }}>All daily tasks done.</div>
+        ) : (
+          <>
+            <div key={sel.id} style={{ animation: "qslide 0.22s ease" }}>
+              <SwipeCard
+                {...cardProps(sel, undefined, daily.length > 1)}
+                onSwipeLeft={daily.length > 1 ? () => setSlide(i + 1 >= daily.length ? 0 : i + 1) : undefined}
+              />
+            </div>
+            {daily.length > 1 && (
+              <div className="flex items-center justify-center" style={{ gap: 8 }}>
+                <span onClick={() => setSlide(i - 1 < 0 ? daily.length - 1 : i - 1)} style={{ padding: "0 8px", fontSize: 18, lineHeight: 1, color: C.onSurfaceVariant, cursor: "pointer", userSelect: "none" }}>‹</span>
+                <div className="flex items-center">
+                  {daily.map((t, n) => (
+                    <div key={t.id} onClick={() => setSlide(n)} style={{ padding: "6px 3px", cursor: "pointer" }}>
+                      <div style={{ width: n === i ? 16 : 6, height: 6, borderRadius: 3, background: n === i ? sel.color : mix(C.faint, 55), transition: "all 0.2s ease" }} />
+                    </div>
+                  ))}
                 </div>
-                {g.items.length === 0 ? (
-                  <div className="flex items-center gap-2" style={{ padding: "10px 12px" }}>
-                    <CheckCircle2 size={14} color={mix(g.color, 65)} />
-                    <span style={{ color: C.onSurfaceVariant, fontSize: 12 }}>{noneMsg}</span>
-                  </div>
-                ) : (
-                  <div className="flex flex-col">
-                    {g.items.map((it, ii) => (
-                      <label
-                        key={it.id}
-                        className="flex items-center gap-2"
-                        style={{ padding: "7px 12px", borderTop: ii > 0 ? `1px solid ${mix(g.color, 12)}` : "none" }}
-                      >
-                        <Check2 checked={false} color={it.color} onClick={it.onClick} />
-                        <span style={{ color: C.onSurface, fontSize: 13, fontWeight: 500 }}>{it.label}</span>
-                      </label>
-                    ))}
-                  </div>
-                )}
+                <span onClick={() => setSlide(i + 1 >= daily.length ? 0 : i + 1)} style={{ padding: "0 8px", fontSize: 18, lineHeight: 1, color: C.onSurfaceVariant, cursor: "pointer", userSelect: "none" }}>›</span>
+                <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint }}>{i + 1}/{daily.length}</span>
               </div>
-            );
-          })}
-        </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {sheet && createPortal(
+        <div className={`theme-${mode}`} style={{ position: "fixed", inset: 0, zIndex: 1000 }}>
+          <div onClick={() => setSheet(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.5)" }} />
+          <div
+            style={{
+              position: "absolute", left: 0, right: 0, bottom: 0, margin: "0 auto", maxWidth: 560, maxHeight: "78vh",
+              overflowY: "auto", overscrollBehavior: "contain",
+              background: C.containerHighest, border: `1px solid ${C.outlineVariant}`, borderBottom: "none",
+              borderRadius: "18px 18px 0 0", padding: "14px 12px 22px", boxShadow: "0 -12px 28px rgba(0,0,0,0.35)",
+            }}
+          >
+            <div className="flex items-center justify-between" style={{ marginBottom: 6 }}>
+              <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 14, color: C.onSurface }}>Today's quests</span>
+              <Touchable onClick={() => setSheet(false)} style={{ padding: "4px 10px", borderRadius: 8 }}>
+                <span style={{ fontFamily: sans, fontWeight: 600, fontSize: 12, color: C.onSurfaceVariant }}>Close</span>
+              </Touchable>
+            </div>
+            {groups.map((g) => {
+              const noneMsg = g.key === "bonus" && (state.resolve.bonusTasks || []).length === 0 ? "No bonus tasks yet." : "All done.";
+              return (
+                <div key={g.key} style={{ marginTop: 10 }}>
+                  <div className="flex items-center" style={{ padding: "0 2px 6px" }}>
+                    <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 10.5, color: g.color, letterSpacing: 0.5, textTransform: "uppercase" }}>{g.label}</span>
+                    <span style={{ marginLeft: "auto", fontFamily: mono, fontSize: 10.5, color: g.items.length > 0 ? g.color : C.faint }}>
+                      {g.items.length > 0 ? `${g.items.length} left` : "clear"}
+                    </span>
+                  </div>
+                  {g.items.length === 0 ? (
+                    <div style={{ color: C.onSurfaceVariant, fontSize: 12, padding: "2px 2px 4px" }}>{noneMsg}</div>
+                  ) : (
+                    g.items.map((t) => <SwipeCard key={t.id} {...cardProps(t, () => setSheet(false))} />)
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -6543,6 +6740,7 @@ export default function LifeRPG() {
   const [state, setState] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("dashboard");
+  const [careOpen, setCareOpen] = useState(null); // null | "skin" | "hair" — which Resolve tile dropdown is open
   const contentScrollRef = useRef(null);
   useEffect(() => {
     if (contentScrollRef.current) contentScrollRef.current.scrollTop = 0;
@@ -7537,13 +7735,6 @@ export default function LifeRPG() {
         <QuestStrip today={today} compact={tab !== "dashboard"} />
         <div className="px-4 pb-1 flex items-center justify-between" style={{ flexShrink: 0 }}>
           <span style={{ fontFamily: mono, color: C.faint, fontSize: 11 }}>Day {idx} / 91</span>
-          {!readOnly && (
-            <CareDots
-              status={careToday}
-              onHair={() => setTab("resolve")}
-              onSkin={() => setTab("resolve")}
-            />
-          )}
           <span style={{ fontFamily: mono, color: C.faint, fontSize: 11 }}>Week {currentWeek}</span>
         </div>
 
@@ -7554,7 +7745,7 @@ export default function LifeRPG() {
           {tab === "dashboard" && (
             <div className="pb-4">
               <div className="px-4 pt-3">
-                <QuestBar state={state} set={update} today={today} />
+                <QuestBar state={state} set={update} today={today} onOpenCare={(w) => { setCareOpen(w); setTab("resolve"); }} />
                 <AttrRow icon={BookOpen} label="Wisdom" score={wScore} color={C.wisdom} tagline="Books & strategic thinking" onClick={() => setTab("wisdom")} />
                 <AttrRow icon={Dumbbell} label="Vitality" score={vScore} color={C.vitality} tagline="Muay Thai, training, treks" onClick={() => setTab("vitality")} />
                 <AttrRow icon={Coins} label="Wealth" score={weScore} color={C.wealth} tagline="Investing & saving" onClick={() => setTab("wealth")} />
@@ -7600,7 +7791,7 @@ export default function LifeRPG() {
           {tab === "vitality" && <VitalityTab s={state.vitality} effective={effVitality} set={update} locked={questLocked} onOpenProgress={() => setTab("progress")} />}
           {tab === "progress" && <ProgressTab gym={state.vitality.gym} />}
           {tab === "wealth" && <WealthTab s={state.wealth} set={update} locked={questLocked} />}
-          {tab === "resolve" && <ResolveTab s={state.resolve} effective={effResolve} set={update} locked={questLocked} wealth={state.wealth} care={state.care} />}
+          {tab === "resolve" && <ResolveTab s={state.resolve} effective={effResolve} set={update} locked={questLocked} wealth={state.wealth} care={state.care} careOpen={careOpen} setCareOpen={setCareOpen} />}
           {tab === "achievements" && <AchievementsTab state={achieveState} overall={overall} />}
           {tab === "diet" && <DietTab s={state.diet} set={update} />}
           {tab === "planner" && (readOnly ? <RestrictedTab label="Planner" /> : <PlannerTab s={state.planner} set={update} />)}
