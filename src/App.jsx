@@ -5575,7 +5575,6 @@ function SwipeRow({ done, color, onToggle, children, mb = 0 }) {
         onPointerMove={move}
         onPointerUp={end}
         onPointerCancel={end}
-        onLostPointerCapture={end}
         onDragStart={(e) => e.preventDefault()}
         style={{ position: "relative", transform: `translateX(${dx}px)`, transition: dragging ? "none" : "transform 0.2s ease", touchAction: "pan-y", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
       >
