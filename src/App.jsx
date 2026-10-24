@@ -6423,12 +6423,12 @@ function LevelCard({ name, onNameChange, overall, totalXP, today, mode, status, 
   );
 }
 
-function TopAppBar({ syncStatus, onMenu, mode, onToggleTheme, readOnly, onQuoteClick, showQuoteButton, level = 1, onSwitchLevel, l1Archived = false }) {
+function TopAppBar({ syncStatus, onMenu, mode, onToggleTheme, readOnly, onQuoteClick, showQuoteButton, level = 1, onSwitchLevel, l1Archived = false, overview = false, onOverview }) {
   return (
     <div className="flex items-center justify-between px-3" style={{ height: 60, flexShrink: 0 }}>
       <div className="flex items-center gap-1.5 pl-1.5">
         <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 16, letterSpacing: 0.5 }}>+ ULTRA</div>
-        <LevelPill level={level} onSwitch={onSwitchLevel} l1Archived={l1Archived} />
+        <LevelPill level={level} onSwitch={onSwitchLevel} l1Archived={l1Archived} overview={overview} onOverview={onOverview} />
       </div>
       <div className="flex items-center gap-2">
         {showQuoteButton && <QuoteButton onClick={onQuoteClick} />}
@@ -6744,6 +6744,7 @@ function QuoteSheet({ open, onClose, today, rankColor, prevRankColor, starPalett
    Tunable numbers the design doc left open live in the constants below.
 ===================================================================== */
 const L2_DOC_ID = "level2";
+const LEVEL_NAMES = { 1: "The Foundation", 2: "Winter Arc" };
 const LEVEL_STORAGE_KEY = "life-rpg-level";
 const L2_START = new Date(2026, 10, 1); // Sun 1 Nov 2026
 const L2_DAYS = 91;
@@ -6998,7 +6999,7 @@ function computeL2(s, today) {
   const total = w + v + we + r;
   const pct = (Math.max(0, total) / 400) * 100;
   const pending = penalties.filter((p) => !p.cleared);
-  const dayLabel = idxRaw < 1 ? `Starts ${fmtDM(L2_DATES[0])}` : idxRaw > L2_DAYS ? "Level 2 complete" : `Day ${idxRaw} / ${L2_DAYS}`;
+  const dayLabel = idxRaw < 1 ? `Starts ${fmtDM(L2_DATES[0])}` : idxRaw > L2_DAYS ? `${LEVEL_NAMES[2]} complete` : `Day ${idxRaw} / ${L2_DAYS}`;
   return {
     todayKey, idxRaw, w, v, we, r, total, pct, displayPct: Math.min(120, pct), penalties, pending, ded, dayLabel,
     parts: { books, dsaTotal, dsaXP, mtXP, wkXP, runXP, evXP, bonusXP },
@@ -7661,7 +7662,7 @@ function L2CalendarTab({ s, set, today }) {
               color={C.accent}
             >
               {!selInRange ? (
-                <p style={{ color: C.faint, fontSize: 12.5, padding: "0 16px 12px" }}>Outside Level 2 (1 Nov 2026 – 30 Jan 2027).</p>
+                <p style={{ color: C.faint, fontSize: 12.5, padding: "0 16px 12px" }}>Outside {LEVEL_NAMES[2]} (1 Nov 2026 – 30 Jan 2027).</p>
               ) : (
                 <L2CalendarDayDetail date={selected} s={s} set={set} />
               )}
@@ -7736,8 +7737,6 @@ function QuestBarL2({ s, set, today, cx, onOpenCare }) {
   const wd = today.getDay();
   const v = s.vitality;
   const evening = new Date().getHours() >= 18;
-  const target = dsaTarget(ds);
-  const solved = Number(s.wisdom.dsa?.[ds]) || 0;
   const plantsDone = clamp(Number(wlog.plants) || 0, 0, 2);
   const setWeekly = (fn) => set((d) => {
     if (!d.resolve.weekly[wk]) d.resolve.weekly[wk] = {};
@@ -7747,8 +7746,6 @@ function QuestBarL2({ s, set, today, cx, onOpenCare }) {
   // Every daily task due right now, done or not. A habit counts as handled
   // once it has any status (done, or a "missed" option chosen in Resolve).
   const dailyAll = !inRange ? [] : [
-    { id: "dsa", short: "DSA", title: "DSA questions", sub: `${solved} / ${target} solved today`, color: C.wisdom, done: solved >= target,
-      onComplete: () => set((d) => { d.wisdom.dsa[ds] = Math.max(Number(d.wisdom.dsa[ds]) || 0, target); }) },
     ...(v.mtDays.includes(wd) && wd !== 5 ? [{ id: "mt", short: "Muay Thai", title: "Muay Thai class", sub: "Today's session", color: C.vitality, done: !!v.mt[ds],
       onComplete: () => set((d) => { d.vitality.mt[ds] = "done"; }) }] : []),
     ...(v.wkDays.includes(wd) ? [{ id: "wk", short: "Strength", title: "Strength workout", sub: "Today's session", color: C.vitality, done: !!v.wk[ds],
@@ -7900,9 +7897,11 @@ function QuestBarL2({ s, set, today, cx, onOpenCare }) {
   );
 }
 
-function L2HomeTab({ cx, s, set, today, setTab, setCareOpen, l1Total }) {
+function L2HomeTab({ cx, s, set, today, setTab, setCareOpen }) {
   const ds = cx.todayKey;
   const inRange = cx.idxRaw >= 1 && cx.idxRaw <= L2_DAYS;
+  const target = dsaTarget(ds);
+  const solved = Number(s.wisdom.dsa?.[ds]) || 0;
   const worst = cx.pending.reduce((m, p) => Math.max(m, p.level), 0);
   const rows = [
     { icon: BookOpen, label: "Wisdom", color: C.wisdom, xp: cx.w, tag: "Books & daily DSA", tab: "wisdom" },
@@ -7915,24 +7914,19 @@ function L2HomeTab({ cx, s, set, today, setTab, setCareOpen, l1Total }) {
       {!inRange && (
         <div style={{ background: mix(C.accent, 12), border: `1px solid ${mix(C.accent, 35)}`, borderRadius: 12, padding: "10px 12px", marginBottom: 10 }}>
           <span style={{ color: C.onSurface, fontSize: 12.5 }}>
-            {cx.idxRaw < 1 ? `Level 2 begins on 1 Nov 2026 — ${1 - cx.idxRaw} day${1 - cx.idxRaw === 1 ? "" : "s"} to go. You can set up books, planned days and the workout library now.` : "Level 2 has ended."}
+            {cx.idxRaw < 1 ? `${LEVEL_NAMES[2]} begins on 1 Nov 2026 — ${1 - cx.idxRaw} day${1 - cx.idxRaw === 1 ? "" : "s"} to go. You can set up books, planned days and the workout library now.` : `${LEVEL_NAMES[2]} has ended.`}
           </span>
         </div>
       )}
-      <div style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 14, padding: "10px 14px", marginBottom: 10 }} className="flex items-center justify-between">
-        <div>
-          <div style={{ fontFamily: mono, fontSize: 9.5, color: C.faint, letterSpacing: 0.5 }}>LEVEL 2 XP</div>
-          <div style={{ fontFamily: sans, fontWeight: 900, fontSize: 20, color: C.onSurface }}>{Math.round(cx.total * 10) / 10}<span style={{ fontFamily: mono, fontSize: 11, color: C.faint, fontWeight: 400 }}> / 400 · {Math.round(cx.pct)}%{cx.pct > 120 ? " (shown 120%)" : ""}</span></div>
-        </div>
-        {l1Total != null && (
-          <div className="text-right">
-            <div style={{ fontFamily: mono, fontSize: 9.5, color: C.faint, letterSpacing: 0.5 }}>CAREER XP</div>
-            <div style={{ fontFamily: mono, fontSize: 15, fontWeight: 700, color: C.accent }}>{Math.round((l1Total + Math.max(0, cx.total)) * 10) / 10}</div>
-            <div style={{ fontFamily: mono, fontSize: 9.5, color: C.faint }}>L1 {Math.round(l1Total)} + L2 {Math.round(cx.total)}</div>
+      {inRange && (
+        <div className="flex items-center justify-between" style={{ background: C.containerHigh, border: `1px solid ${solved >= target ? mix(C.wisdom, 40) : C.outlineVariant}`, borderLeft: `3px solid ${solved >= target ? C.wisdom : C.outlineVariant}`, borderRadius: 12, padding: "8px 12px", marginBottom: 10 }}>
+          <div>
+            <div style={{ color: C.onSurface, fontSize: 13 }}>DSA questions</div>
+            <div style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>{solved} / {target} today · every 3 solved = 1 XP</div>
           </div>
-        )}
-      </div>
-
+          <Counter value={solved} max={30} color={C.wisdom} onChange={(n) => set((d) => { if (n) d.wisdom.dsa[ds] = n; else delete d.wisdom.dsa[ds]; })} />
+        </div>
+      )}
       <QuestBarL2 s={s} set={set} today={today} cx={cx} onOpenCare={(w) => { setCareOpen(w); setTab("resolve"); }} />
 
       {cx.pending.length > 0 && (
@@ -8179,6 +8173,8 @@ function L2ResolveTab({ cx, s, set, today, careOpen, setCareOpen }) {
   return (
     <div className="pb-4">
       <ScreenHeader title="Resolve" sub="Daily habits and household routines." color={color} score={cx.r} />
+      <CareOverviewTiles care={s.care} open={careOpen} onToggle={(w) => setCareOpen(careOpen === w ? null : w)} />
+      {careOpen && <CareDropdown which={careOpen} care={s.care} dateKey={ds} idx={i + 1} weekNum={wk} shiftDay={shiftDay} set={set} />}
       <div className="mx-4">
         <L2DayNav ds={ds} setDs={setDs} extra={`${dayXP >= 0 ? "+" : ""}${dayXP} XP`} />
       </div>
@@ -8186,8 +8182,6 @@ function L2ResolveTab({ cx, s, set, today, careOpen, setCareOpen }) {
         <SwipeHint />
         <L2HabitList key={ds} s={s} set={set} ds={ds} />
       </div>
-      <CareOverviewTiles care={s.care} open={careOpen} onToggle={(w) => setCareOpen(careOpen === w ? null : w)} />
-      {careOpen && <CareDropdown which={careOpen} care={s.care} dateKey={ds} idx={i + 1} weekNum={wk} shiftDay={shiftDay} set={set} />}
       <Mission title={`Week ${wk} chores`} rightLabel={`${r2((wlog.laundry ? 1 : 0) + (wlog.iron ? 0.5 : 0) + (clamp(Number(wlog.plants) || 0, 0, 2)) * 0.25)} / 2 XP`} color={color} defaultOpen>
         {weekRow("Laundry", !!wlog.laundry, 1, () => setW({ laundry: !wlog.laundry }))}
         {weekRow("Ironing", !!wlog.iron, 0.5, () => setW({ iron: !wlog.iron }))}
@@ -8276,8 +8270,8 @@ function L2PenaltiesTab({ cx, s, set, today }) {
 }
 
 /* ---------- router ---------- */
-function Level2Tabs({ tab, cx, s, set, today, setTab, l1Total, careOpen, setCareOpen }) {
-  if (tab === "dashboard") return <L2HomeTab cx={cx} s={s} set={set} today={today} setTab={setTab} setCareOpen={setCareOpen} l1Total={l1Total} />;
+function Level2Tabs({ tab, cx, s, set, today, setTab, careOpen, setCareOpen }) {
+  if (tab === "dashboard") return <L2HomeTab cx={cx} s={s} set={set} today={today} setTab={setTab} setCareOpen={setCareOpen} />;
   if (tab === "wisdom") return <L2WisdomTab cx={cx} s={s} set={set} today={today} />;
   if (tab === "vitality") return <L2VitalityTab cx={cx} s={s} set={set} today={today} onOpenProgress={() => setTab("progress")} />;
   if (tab === "wealth") return <L2WealthTab cx={cx} s={s} set={set} />;
@@ -8288,7 +8282,141 @@ function Level2Tabs({ tab, cx, s, set, today, setTab, l1Total, careOpen, setCare
 }
 
 /* ---------- level switcher (replaces the static LEVEL pill) ---------- */
-function LevelPill({ level, onSwitch, l1Archived }) {
+/* ---------------------------------------------------------------
+   ALL LEVELS — combined Level 1 + Level 2 summary. Opened from the level
+   dropdown. Read-only: career XP (both levels added together), lifetime XP
+   per stat with the Level 1 / Level 2 split, and a card per level with its
+   own XP and rank. Switching level from here uses the same switcher as the
+   dropdown. Per-level numbers come from the same scoring code each level
+   uses on its own screens, so they match.
+--------------------------------------------------------------- */
+function summarizeL1(data) {
+  const s1 = migrateState(data);
+  const t = new Date();
+  const ev = effectiveVitality(s1.vitality, t);
+  const er = effectiveResolve(s1.resolve, s1.vitality, t);
+  const w = wisdomScore(s1.wisdom), v = vitalityScore(ev), we = wealthScore(s1.wealth), r = resolveScore(er);
+  const total = w + v + we + r;
+  return { w, v, we, r, total, rank: rankInfo(total).rank };
+}
+function summarizeL2(data) {
+  const s2 = migrateStateL2(data);
+  const cx = computeL2(s2, new Date());
+  return { w: cx.w, v: cx.v, we: cx.we, r: cx.r, total: cx.total, rank: rankInfoL2(cx.total).rank };
+}
+
+const OV_STATS = [
+  { k: "w", label: "Wisdom", color: C.wisdom, Icon: BookOpen },
+  { k: "v", label: "Vitality", color: C.vitality, Icon: Dumbbell },
+  { k: "we", label: "Wealth", color: C.wealth, Icon: Coins },
+  { k: "r", label: "Resolve", color: C.resolve, Icon: ShieldCheck },
+];
+const ovNum = (n) => String(Math.round((Number(n) || 0) * 10) / 10);
+
+function AllLevelsOverview({ levels, level, onOpen }) {
+  const mode = useContext(ThemeModeContext);
+  const l1 = levels[1], l2 = levels[2];
+  const have = (x) => !!x && !x.missing;
+  const val = (x, k) => (have(x) ? Math.max(0, Number(x[k]) || 0) : 0);
+  const L1C = mix(C.accent, 42);
+  const L2C = C.accent;
+  const total1 = val(l1, "total"), total2 = val(l2, "total");
+  const career = total1 + total2;
+  const life = OV_STATS.map((st) => ({ ...st, a: val(l1, st.k), b: val(l2, st.k) }));
+  const scale = Math.max(1, ...life.map((x) => x.a + x.b));
+  const card = { background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 16, padding: "12px 14px", marginBottom: 10 };
+  const label = { fontFamily: mono, fontSize: 9.5, color: C.faint, letterSpacing: 0.5 };
+  const bar = (parts, max) => (
+    <div style={{ display: "flex", height: 7, borderRadius: 4, overflow: "hidden", background: C.outlineVariant }}>
+      {parts.map(([w, col], i) => <div key={i} style={{ width: `${clamp((w / max) * 100, 0, 100)}%`, background: col, transition: "width 0.3s ease" }} />)}
+    </div>
+  );
+  const status = (n) => {
+    if (n === 1) return dayIndex(new Date()) > TOTAL_DAYS ? "ARCHIVED" : "ACTIVE";
+    const i = l2DayIndex(new Date());
+    return i < 1 ? "UPCOMING" : i > L2_DAYS ? "COMPLETE" : "ACTIVE";
+  };
+  const levelInfo = [
+    { n: 1, range: "2 Aug – 31 Oct 2026", x: l1, col: L1C },
+    { n: 2, range: "1 Nov 2026 – 30 Jan 2027", x: l2, col: L2C },
+  ];
+
+  return (
+    <div className="pb-6 pt-1">
+      <div className="px-4 pt-4 pb-3 flex items-center gap-2">
+        <Diamond size={7} color={C.accent} glow />
+        <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 22, letterSpacing: 0.3 }}>ALL LEVELS</div>
+      </div>
+
+      <div className="mx-4">
+        <div style={card}>
+          <div style={label}>CAREER XP</div>
+          <div style={{ fontFamily: sans, fontWeight: 900, fontSize: 30, color: C.onSurface, lineHeight: 1.1, margin: "2px 0 8px" }}>{ovNum(career)}</div>
+          {bar([[total1, L1C], [total2, L2C]], Math.max(1, career))}
+          <div className="flex items-center gap-4" style={{ marginTop: 8 }}>
+            <div className="flex items-center gap-1.5">
+              <div style={{ width: 8, height: 8, borderRadius: 2, background: L1C }} />
+              <span style={{ fontFamily: mono, fontSize: 10.5, color: C.onSurfaceVariant }}>{LEVEL_NAMES[1]} · {l1 === null ? "…" : have(l1) ? ovNum(total1) : "—"}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div style={{ width: 8, height: 8, borderRadius: 2, background: L2C }} />
+              <span style={{ fontFamily: mono, fontSize: 10.5, color: C.onSurfaceVariant }}>{LEVEL_NAMES[2]} · {l2 === null ? "…" : have(l2) ? ovNum(total2) : "—"}</span>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ fontFamily: sans, fontWeight: 700, fontSize: 11.5, color: C.faint, letterSpacing: 0.4, margin: "14px 2px 6px" }}>LIFETIME BY STAT</div>
+        <div style={card}>
+          {life.map((x, i) => (
+            <div key={x.k} style={{ marginBottom: i === life.length - 1 ? 0 : 12 }}>
+              <div className="flex items-center justify-between" style={{ marginBottom: 5 }}>
+                <div className="flex items-center gap-2">
+                  <x.Icon size={15} color={x.color} />
+                  <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 13, color: C.onSurface }}>{x.label}</span>
+                </div>
+                <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 14, color: x.color }}>{ovNum(x.a + x.b)}</span>
+              </div>
+              {bar([[x.a, mix(x.color, 45)], [x.b, x.color]], scale)}
+              <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginTop: 3 }}>L1 {ovNum(x.a)} + L2 {ovNum(x.b)}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ fontFamily: sans, fontWeight: 700, fontSize: 11.5, color: C.faint, letterSpacing: 0.4, margin: "14px 2px 6px" }}>LEVELS</div>
+        {levelInfo.map(({ n, range, x, col }) => {
+          const st = status(n);
+          const current = n === level;
+          return (
+            <Touchable key={n} onClick={() => onOpen(n)} style={{ ...card, display: "block", borderColor: current ? mix(C.accent, 50) : C.outlineVariant, padding: 0 }}>
+              <div className="flex items-center gap-3" style={{ padding: "12px 14px" }}>
+                <div style={{ width: 4, alignSelf: "stretch", borderRadius: 2, background: col }} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span style={{ fontFamily: sans, fontWeight: 800, fontSize: 14, color: C.onSurface }}>{LEVEL_NAMES[n]}</span>
+                    <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>LEVEL {n}</span>
+                    <L2Chip color={st === "ACTIVE" ? C.resolve : C.faint}>{st}</L2Chip>
+                    {have(x) && <L2Chip color={rankColor(x.rank, mode)}>RANK {x.rank}</L2Chip>}
+                  </div>
+                  <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginTop: 2 }}>{range}</div>
+                  <div style={{ fontFamily: mono, fontSize: 11.5, color: C.onSurfaceVariant, marginTop: 4 }}>
+                    {x === null ? "Loading…" : have(x) ? `${ovNum(x.total)} / 400 XP` : "No data yet"}
+                  </div>
+                </div>
+                <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 12, color: C.accent, whiteSpace: "nowrap" }}>{current ? "Back →" : "Open →"}</span>
+              </div>
+            </Touchable>
+          );
+        })}
+
+        <p style={{ fontFamily: mono, fontSize: 10, color: C.faint, margin: "6px 2px 0" }}>
+          Career XP adds both levels together. Each level's stat target is 100 XP, so per-stat totals can go past 100. This page is a read-only summary.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function LevelPill({ level, onSwitch, l1Archived, overview = false, onOverview }) {
   const [open, setOpen] = useState(false);
   const started2 = l2DayIndex(new Date()) >= 1;
   const opts = [
@@ -8301,18 +8429,27 @@ function LevelPill({ level, onSwitch, l1Archived }) {
         onClick={() => setOpen((o) => !o)}
         style={{ fontFamily: mono, fontWeight: 700, fontSize: 9.5, letterSpacing: 0.5, color: C.accent, background: mix(C.accent, 16), border: `1px solid ${mix(C.accent, 30)}`, borderRadius: 8, padding: "3px 6px 3px 7px", display: "flex", alignItems: "center", gap: 3 }}
       >
-        LEVEL {level}
+        {overview ? "ALL LEVELS" : `LEVEL ${level}`}
         <ChevronDown size={11} />
       </Touchable>
       {open && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 25 }} />
           <div style={{ position: "absolute", top: 30, left: 0, zIndex: 26, minWidth: 224, background: C.containerHighest, border: `1px solid ${C.outlineVariant}`, borderRadius: 14, boxShadow: "0 12px 28px rgba(0,0,0,0.4)", overflow: "hidden" }}>
+            <Touchable onClick={() => { setOpen(false); onOverview?.(); }} style={{ display: "block", background: overview ? mix(C.accent, 12) : "transparent", borderBottom: `1px solid ${C.outlineVariant}` }}>
+              <div className="flex items-center justify-between gap-3 px-4 py-3">
+                <div>
+                  <div style={{ fontFamily: sans, fontWeight: 800, fontSize: 13, color: overview ? C.accent : C.onSurface }}>All levels</div>
+                  <div style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>Combined progress</div>
+                </div>
+                <Trophy size={14} color={overview ? C.accent : C.faint} />
+              </div>
+            </Touchable>
             {opts.map((o) => (
-              <Touchable key={o.n} onClick={() => { setOpen(false); onSwitch(o.n); }} style={{ display: "block", background: o.n === level ? mix(C.accent, 12) : "transparent" }}>
+              <Touchable key={o.n} onClick={() => { setOpen(false); onSwitch(o.n); }} style={{ display: "block", background: (!overview && o.n === level) ? mix(C.accent, 12) : "transparent" }}>
                 <div className="flex items-center justify-between gap-3 px-4 py-3">
                   <div>
-                    <div style={{ fontFamily: sans, fontWeight: 800, fontSize: 13, color: o.n === level ? C.accent : C.onSurface }}>Level {o.n}</div>
+                    <div style={{ fontFamily: sans, fontWeight: 800, fontSize: 13, color: (!overview && o.n === level) ? C.accent : C.onSurface }}>Level {o.n} · {LEVEL_NAMES[o.n]}</div>
                     <div style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>{o.range}</div>
                   </div>
                   <L2Chip color={o.chip === "ACTIVE" ? C.resolve : C.faint}>{o.chip}</L2Chip>
@@ -8359,7 +8496,8 @@ export default function LifeRPG() {
     } catch {}
     return l2DayIndex(new Date()) >= 1 ? 2 : 1;
   });
-  const [l1Total, setL1Total] = useState(null);
+  const [overview, setOverview] = useState(false);       // "All levels" page open
+  const [otherSummary, setOtherSummary] = useState(null);  // summary of the level that is NOT on screen (null = loading)
   const l1Archived = level === 1 && dayIndex(new Date()) > TOTAL_DAYS;
   const viewOnly = readOnly || l1Archived;
 
@@ -8718,21 +8856,24 @@ export default function LifeRPG() {
     setLevel(n);
   }, [level, viewOnly, state]);
 
+  const pickLevel = useCallback((n) => { setOverview(false); switchLevel(n); }, [switchLevel]);
+  const openOverview = useCallback(() => { setMenuOpen(false); setOverview(true); }, []);
+
+  // "All levels" page: the level on screen is summarised from live state; the
+  // other level is read once from its own doc when the page opens.
   useEffect(() => {
-    if (level !== 2 || !authenticated) return;
+    if (!overview || !authenticated) return;
     let off = false;
-    getDoc(doc(db, QUESTS_COLLECTION, MAIN_DOC_ID)).then((snap) => {
-      if (off || !snap.exists()) return;
-      try {
-        const s1 = migrateState(snap.data());
-        const t = new Date();
-        const ev = effectiveVitality(s1.vitality, t);
-        const er = effectiveResolve(s1.resolve, s1.vitality, t);
-        setL1Total(wisdomScore(s1.wisdom) + vitalityScore(ev) + wealthScore(s1.wealth) + resolveScore(er));
-      } catch {}
-    }).catch(() => {});
+    setOtherSummary(null);
+    const other = level === 2 ? 1 : 2;
+    getDoc(doc(db, QUESTS_COLLECTION, other === 2 ? L2_DOC_ID : MAIN_DOC_ID)).then((snap) => {
+      if (off) return;
+      if (!snap.exists()) { setOtherSummary({ missing: true }); return; }
+      try { setOtherSummary(other === 1 ? summarizeL1(snap.data()) : summarizeL2(snap.data())); }
+      catch { setOtherSummary({ missing: true }); }
+    }).catch(() => { if (!off) setOtherSummary({ missing: true }); });
     return () => { off = true; };
-  }, [level, authenticated]);
+  }, [overview, level, authenticated]);
 
   const doReset = useCallback(() => {
     if (viewOnly) return;
@@ -9019,15 +9160,17 @@ export default function LifeRPG() {
           onToggleTheme={toggleTheme}
           readOnly={readOnly}
           onQuoteClick={() => setQuoteOpen(true)}
-          showQuoteButton={tab === "dashboard"}
+          showQuoteButton={tab === "dashboard" && !overview}
           level={level}
-          onSwitchLevel={switchLevel}
+          onSwitchLevel={pickLevel}
+          overview={overview}
+          onOverview={openOverview}
           l1Archived={l1Archived}
         />
 
         {l1Archived && (
           <div style={{ margin: "0 12px 4px", padding: "6px 12px", borderRadius: 10, background: mix(C.accent, 10), border: `1px solid ${mix(C.accent, 28)}`, fontFamily: mono, fontSize: 10.5, color: C.onSurfaceVariant, flexShrink: 0 }}>
-            Level 1 is archived — view only. Switch to Level 2 from the pill above.
+            {LEVEL_NAMES[1]} is archived — view only. Switch to {LEVEL_NAMES[2]} from the pill above.
           </div>
         )}
 
@@ -9395,6 +9538,18 @@ export default function LifeRPG() {
           </>
         )}
 
+        {overview ? (
+          <div className="flex-1 overflow-y-auto" style={{ position: "relative" }}>
+            <AllLevelsOverview
+              levels={level === 2
+                ? { 1: otherSummary, 2: { w: wScore, v: vScore, we: weScore, r: rScore, total: wScore + vScore + weScore + rScore, rank: appRank } }
+                : { 1: { w: wScore, v: vScore, we: weScore, r: rScore, total: wScore + vScore + weScore + rScore, rank: appRank }, 2: otherSummary }}
+              level={level}
+              onOpen={pickLevel}
+            />
+          </div>
+        ) : (
+          <>
         <div className="pt-1">
           <LevelCard
             name={state.profile?.name || ""}
@@ -9509,7 +9664,7 @@ export default function LifeRPG() {
           {tab === "diet" && <DietTab s={state.diet} set={update} />}
           {tab === "planner" && (viewOnly ? <RestrictedTab label="Planner" /> : <PlannerTab s={state.planner} set={update} />)}
           {!isL2 && tab === "calendar" && <CalendarTab state={state} set={update} />}
-          {isL2 && <Level2Tabs tab={tab} cx={L2cx} s={state} set={update} today={today} setTab={setTab} l1Total={l1Total} careOpen={careOpen} setCareOpen={setCareOpen} />}
+          {isL2 && <Level2Tabs tab={tab} cx={L2cx} s={state} set={update} today={today} setTab={setTab} careOpen={careOpen} setCareOpen={setCareOpen} />}
 
           {/* FAB — Save button (bottom-right slot). The Quote button now
               lives in the top bar, so this slot is Save-only: it fades
@@ -9543,8 +9698,13 @@ export default function LifeRPG() {
           </div>
         </div>
 
+          </>
+        )}
+
         <QuoteSheet open={quoteOpen} onClose={() => setQuoteOpen(false)} today={today} rankColor={rankTint} prevRankColor={prevRankTint} starPalette={starPalette} />
-        <BottomNav tab={tab} setTab={setTab} tabs={tabs.filter((t) => t.id !== "achievements" && t.id !== "diet" && t.id !== "planner" && t.id !== "calendar" && t.id !== "progress")} badges={navBadges} />
+        {!overview && (
+            <BottomNav tab={tab} setTab={setTab} tabs={tabs.filter((t) => t.id !== "achievements" && t.id !== "diet" && t.id !== "planner" && t.id !== "calendar" && t.id !== "progress")} badges={navBadges} />
+        )}
       </div>
     </div>
     </ReadOnlyContext.Provider>
