@@ -6056,10 +6056,10 @@ function CodeGate({ onSubmitEnter, onSubmitSetup, setupMode, checking, busy, err
    above a large, heavy rank letter, tinted with the current rank's color.
    Tapping it opens a small popover with the rank color and XP details;
    it closes on any click outside. */
-function RankBadge({ rank, color, xp, bandFrom, bandTo, mode }) {
+function RankBadge({ rank, color, xp, bandFrom, bandTo, mode, bands = RANK_BANDS }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
-  const elite = RANK_BANDS.findIndex((b) => b.rank === rank) >= RANK_BANDS.length - 2;
+  const elite = bands.findIndex((b) => b.rank === rank) >= bands.length - 2;
 
   useEffect(() => {
     if (!open) return;
@@ -6116,7 +6116,7 @@ function RankBadge({ rank, color, xp, bandFrom, bandTo, mode }) {
           <div style={{ height: 1, background: C.outlineVariant, margin: "10px 0 8px" }} />
           <span style={{ fontFamily: mono, fontSize: 9, color: C.faint, letterSpacing: 1 }}>ALL RANKS</span>
           <div className="flex flex-col gap-1.5" style={{ marginTop: 6 }}>
-            {RANK_BANDS.map((b) => {
+            {bands.map((b) => {
               const bc = rankColor(b.rank, mode);
               const isCurrent = b.rank === rank;
               return (
@@ -6276,10 +6276,10 @@ function StatusChip({ status, enabled, onChange, onToggleEnabled }) {
   );
 }
 
-function LevelCard({ name, onNameChange, overall, totalXP, today, mode, status, statusEnabled, onStatusChange, onToggleStatusEnabled, compact = false }) {
+function LevelCard({ name, onNameChange, overall, totalXP, today, mode, status, statusEnabled, onStatusChange, onToggleStatusEnabled, compact = false, rankFn = rankInfo, bands = RANK_BANDS }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name);
-  const { rank, progress, bandFrom, bandTo, xp } = rankInfo(totalXP);
+  const { rank, progress, bandFrom, bandTo, xp } = rankFn(totalXP);
   const rc = rankColor(rank, mode);
 
   useEffect(() => {
@@ -6382,7 +6382,7 @@ function LevelCard({ name, onNameChange, overall, totalXP, today, mode, status, 
 
           <div className="flex items-end gap-3" style={{ marginTop: compact ? 0 : 8, transition: "margin-top 0.3s ease" }}>
             <RankBadge
-              rank={rank} color={rc} xp={xp} bandFrom={bandFrom} bandTo={bandTo} mode={mode}
+              rank={rank} color={rc} xp={xp} bandFrom={bandFrom} bandTo={bandTo} mode={mode} bands={bands}
             />
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5">
@@ -6423,20 +6423,12 @@ function LevelCard({ name, onNameChange, overall, totalXP, today, mode, status, 
   );
 }
 
-function TopAppBar({ syncStatus, onMenu, mode, onToggleTheme, readOnly, onQuoteClick, showQuoteButton }) {
+function TopAppBar({ syncStatus, onMenu, mode, onToggleTheme, readOnly, onQuoteClick, showQuoteButton, level = 1, onSwitchLevel, l1Archived = false }) {
   return (
     <div className="flex items-center justify-between px-3" style={{ height: 60, flexShrink: 0 }}>
       <div className="flex items-center gap-1.5 pl-1.5">
         <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 16, letterSpacing: 0.5 }}>+ ULTRA</div>
-        <span
-          style={{
-            fontFamily: mono, fontWeight: 700, fontSize: 9.5, letterSpacing: 0.5,
-            color: C.accent, background: mix(C.accent, 16), border: `1px solid ${mix(C.accent, 30)}`,
-            borderRadius: 8, padding: "3px 7px",
-          }}
-        >
-          LEVEL 1
-        </span>
+        <LevelPill level={level} onSwitch={onSwitchLevel} l1Archived={l1Archived} />
       </div>
       <div className="flex items-center gap-2">
         {showQuoteButton && <QuoteButton onClick={onQuoteClick} />}
@@ -6739,6 +6731,968 @@ function QuoteSheet({ open, onClose, today, rankColor, prevRankColor, starPalett
 /* ---------------------------------------------------------------
    MAIN APP
 --------------------------------------------------------------- */
+/* =====================================================================
+   LEVEL 2  (1 Nov 2026 – 30 Jan 2027)
+
+   Level 1 is never touched: it keeps living in the "main" Firestore doc.
+   Level 2 has its own doc ("level2") with its own state shape, scoring,
+   penalties and tabs. Anything that is shared (Diet, Planner, Hair/Skin
+   care, the workout logger) uses exactly the same state paths as Level 1
+   (state.diet, state.planner, state.care, state.vitality.gym), so those
+   screens are reused as-is.
+
+   Tunable numbers the design doc left open live in the constants below.
+===================================================================== */
+const L2_DOC_ID = "level2";
+const LEVEL_STORAGE_KEY = "life-rpg-level";
+const L2_START = new Date(2026, 10, 1); // Sun 1 Nov 2026
+const L2_DAYS = 91;
+const L2_WEEKS = 13;
+const L2_LEAVES = { mt: 6, wk: 5 };
+const L2_OVERDUE_DEDUCT = 0.5; // XP lost per day after the weekly deadline
+const L2_OVERDUE_CAP = 5;      // max XP a single penalty can ever cost
+const L2_RANK_BANDS = [
+  { rank: "E", from: 0, to: 20 },
+  { rank: "D", from: 20, to: 60 },
+  { rank: "C", from: 60, to: 120 },
+  { rank: "B", from: 120, to: 200 },
+  { rank: "A", from: 200, to: 300 },
+  { rank: "S", from: 300, to: 400 },
+  { rank: "SS", from: 400, to: 480 }, // 400 = 100 %, 480 = the 120 % display cap
+];
+/* Boundaries: a total sits in the band where from <= xp < to, so 20 is D and
+   300 is S. S includes exactly 400 (100 %); SS is strictly above 400. */
+function rankInfoL2(totalXP) {
+  const xp = clamp(totalXP, 0, 480);
+  const band = xp > 400
+    ? L2_RANK_BANDS[6]
+    : L2_RANK_BANDS.slice(0, 6).find((b) => xp < b.to) || L2_RANK_BANDS[5];
+  const progress = (xp - band.from) / (band.to - band.from);
+  return { rank: band.rank, progress: clamp(progress, 0, 1), bandFrom: band.from, bandTo: band.to, xp };
+}
+
+const L2_BOOKS = [
+  { id: "seduction", title: "The Art of Seduction", reading: 34, bonus: 3, chapters: 24 },
+  { id: "chanakya", title: "Chanakya in You", reading: 25, bonus: 3, chapters: 20 },
+  { id: "subconscious", title: "The Power of Your Subconscious Mind", reading: 20, bonus: 3, chapters: 15 },
+  { id: "money", title: "The Psychology of Money", reading: 20, bonus: 3, chapters: 20 },
+];
+const L2_HABITS = [
+  { k: "wake", label: "Wake up by 7 AM + plan the day", xp: 0.2 },
+  { k: "news", label: "Read the news", xp: 0.4 },
+  { k: "skin", label: "Skincare routine", xp: 0.2 },
+  { k: "hair", label: "Haircare routine", xp: 0.2 },
+  { k: "med", label: "Meditate 10 min + brush teeth at night", xp: 0.4 },
+];
+const L2_LADDER = {
+  1: "One-day recreational media ban",
+  2: "100 push-ups + 100 crunches",
+  3: "Read one extra chapter",
+  4: "Standalone 5 km run",
+  5: "100 push-ups + 100 crunches + 100 squats",
+  6: "Standalone 10 km run",
+  7: "100 push-ups + 100 crunches + 100 squats + 10 km run",
+};
+const L2_PHYSICAL = new Set([2, 4, 5, 6, 7]);
+const L2_MONTHS = ["November", "December", "January"];
+const L2_L3_COLOR = "#FFB020"; // colour for the "Level 3 option" missed-habit state
+
+/* ---------- date helpers ---------- */
+const DAY_MS = 86400000;
+function parseDS(ds) { return new Date(ds + "T00:00:00"); }
+function l2DayIndex(d) { return Math.round((dateOnly(d) - L2_START) / DAY_MS) + 1; }
+const L2_DATES = Array.from({ length: L2_DAYS }, (_, i) => {
+  const d = new Date(L2_START);
+  d.setDate(d.getDate() + i);
+  return fmtDate(d);
+});
+function l2WeekOf(ds) {
+  const i = L2_DATES.indexOf(ds);
+  return clamp(Math.floor(i / 7) + 1, 1, L2_WEEKS);
+}
+function l2WeekDates(w) { return L2_DATES.slice((w - 1) * 7, (w - 1) * 7 + 7); }
+function daysBetween(a, b) { return Math.round((parseDS(b) - parseDS(a)) / DAY_MS); }
+function fmtShort(ds) {
+  return parseDS(ds).toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short" });
+}
+function fmtDM(ds) {
+  return parseDS(ds).toLocaleDateString("en-US", { day: "numeric", month: "short" });
+}
+function weekLabel(w) {
+  const ds = l2WeekDates(w);
+  return `${fmtDM(ds[0])} – ${fmtDM(ds[ds.length - 1])}`;
+}
+function dsaTarget(ds) {
+  const wd = parseDS(ds).getDay();
+  return wd === 0 || wd === 6 ? 2 : 1;
+}
+const r2 = (n) => Math.round(n * 100) / 100;
+
+/* ---------- state ---------- */
+function defaultStateL2(seed) {
+  const clone = (x) => JSON.parse(JSON.stringify(x));
+  const gym = defaultGymState();
+  // Carry your exercise library and workout templates over from Level 1
+  // (copied, never moved). Logs start fresh.
+  if (seed?.vitality?.gym) {
+    gym.exercises = clone(seed.vitality.gym.exercises || []);
+    gym.schedules = clone(seed.vitality.gym.schedules || []);
+  }
+  const plannerDays = {};
+  Object.entries(seed?.planner?.days || {}).forEach(([k, v]) => {
+    if (k >= fmtDate(L2_START)) plannerDays[k] = clone(v);
+  });
+  return {
+    level: 2,
+    profile: seed?.profile ? clone(seed.profile) : { name: "", status: "", statusEnabled: true },
+    wisdom: {
+      books: Object.fromEntries(L2_BOOKS.map((b) => [b.id, { chapters: b.chapters, done: 0 }])),
+      dsa: {}, // { "YYYY-MM-DD": questionsSolved }
+    },
+    vitality: {
+      mtDays: [1, 2, 3, 4],       // planned Muay Thai weekdays (0 = Sun); never Friday
+      wkDays: [1, 2, 3, 4, 5],    // planned strength-workout weekdays
+      mt: {},                     // { date: "done" | "leave" | "penalty" | "deduct" }
+      wk: {},
+      events: 0,                  // treks + marathons completed
+      runKm: {},                  // { weekNumber: km }
+      gym,
+    },
+    wealth: {
+      invest: ["", "", ""],       // date each month's investing was marked
+      save: [0, 0, 0],            // rupees saved per month
+      stock: false,
+      analyses: Array.from({ length: 9 }, () => ({ company: "", done: false })),
+      asset: false,
+    },
+    resolve: {
+      habits: {},                 // { date: { wake|news|skin|hair|med: "done" | "opt1" | "opt2" } }
+      weekly: {},                 // { weekNumber: { laundry, iron, plants(0-2) } }
+      bedsheets: [false, false, false],
+      dailyLogs: {},              // kept only because the shared care toggle mirrors hair care here
+    },
+    penalties: { cleared: {}, paused: {}, shift: {}, manual: [] },
+    diet: { plans: clone(seed?.diet?.plans || []), logs: {} },
+    planner: { days: plannerDays, unlisted: clone(seed?.planner?.unlisted || []) },
+    care: { hair: { logs: {} }, skin: { logs: {} } },
+  };
+}
+function deepFill(t, d) {
+  if (Array.isArray(d)) return Array.isArray(t) ? t : d;
+  if (d && typeof d === "object") {
+    const out = t && typeof t === "object" && !Array.isArray(t) ? { ...t } : {};
+    Object.keys(d).forEach((k) => { out[k] = deepFill(out[k], d[k]); });
+    return out;
+  }
+  return t === undefined || t === null ? d : t;
+}
+function migrateStateL2(parsed) {
+  const next = deepFill(parsed, defaultStateL2(null));
+  next.level = 2;
+  return next;
+}
+
+/* ---------- scoring ---------- */
+function l2BookXP(b, bs) {
+  const ch = Math.max(1, Number(bs?.chapters) || b.chapters);
+  const done = clamp(Number(bs?.done) || 0, 0, ch);
+  const reading = (b.reading * done) / ch;
+  const bonus = done >= ch ? b.bonus : 0;
+  return { ch, done, reading, bonus, total: reading + bonus };
+}
+function l2HabitStatus(s, ds, k) {
+  const h = s.resolve.habits?.[ds]?.[k];
+  if (h) return h;
+  const c = careStatus(s.care, ds);
+  if (k === "skin" && c.amDone && c.pmDone) return "done";
+  if (k === "hair" && c.hairDayDone && c.hairNightDone) return "done";
+  return "";
+}
+/* Every penalty is derived from the state (missed sessions, short run weeks,
+   missed habits, manual entries) so nothing can drift out of sync. Only
+   "cleared / paused / shift" are stored. Level rises by one per overdue day
+   (max L7); after the end of the week it arose in, each further day costs
+   XP; pausing (illness/injury) freezes both. */
+function deriveL2Penalties(s, today) {
+  const todayKey = fmtDate(today);
+  const pen = s.penalties || {};
+  const out = [];
+  const add = (id, label, level, since, stat, source) => {
+    const clearedAt = pen.cleared?.[id];
+    const pausedAt = pen.paused?.[id];
+    const end = clearedAt || pausedAt || todayKey;
+    const shift = pen.shift?.[id] || 0;
+    const deadline = L2_DATES[Math.min(l2WeekOf(since) * 7 - 1, L2_DAYS - 1)];
+    const overdue = Math.max(0, daysBetween(since, end) - shift);
+    const late = Math.max(0, daysBetween(deadline, end) - shift);
+    const lvl = Math.min(7, level + overdue);
+    out.push({
+      id, label, baseLevel: level, level: lvl, since, deadline, overdue, late, stat, source,
+      deduction: Math.min(L2_OVERDUE_CAP, late * L2_OVERDUE_DEDUCT),
+      cleared: !!clearedAt, paused: !!pausedAt && !clearedAt, physical: L2_PHYSICAL.has(lvl),
+    });
+  };
+  Object.entries(s.vitality.mt || {}).forEach(([ds, st]) => { if (st === "penalty") add(`mt-${ds}`, `Missed Muay Thai · ${fmtShort(ds)}`, 7, ds, "vitality", "Muay Thai"); });
+  Object.entries(s.vitality.wk || {}).forEach(([ds, st]) => { if (st === "penalty") add(`wk-${ds}`, `Missed workout · ${fmtShort(ds)}`, 5, ds, "vitality", "Workout"); });
+  Object.entries(s.resolve.habits || {}).forEach(([ds, hs]) => {
+    L2_HABITS.forEach((h) => {
+      if (hs?.[h.k] === "opt1") add(`h1-${ds}-${h.k}`, `Missed: ${h.label} · ${fmtShort(ds)}`, 1, ds, "resolve", "Resolve habit");
+      if (hs?.[h.k] === "opt2") add(`h3-${ds}-${h.k}`, `Missed: ${h.label} · ${fmtShort(ds)}`, 3, ds, "resolve", "Resolve habit");
+    });
+  });
+  for (let w = 1; w <= L2_WEEKS; w++) {
+    const wkEnd = L2_DATES[w * 7 - 1];
+    const km = Number(s.vitality.runKm?.[w]) || 0;
+    if (wkEnd < todayKey && km < 10) add(`run-${w}`, `Week ${w}: ran ${r2(km)} km (< 10 km)`, 6, wkEnd, "vitality", "Running");
+  }
+  (pen.manual || []).forEach((m) => add(m.id, m.label, m.level, m.since, m.stat || "vitality", "Manual"));
+  return out.sort((a, b) => Number(a.cleared) - Number(b.cleared) || b.level - a.level || (a.since < b.since ? -1 : 1));
+}
+function computeL2(s, today) {
+  const todayKey = fmtDate(today);
+  const idxRaw = l2DayIndex(today);
+  const penalties = deriveL2Penalties(s, today);
+  const ded = { vitality: 0, resolve: 0 };
+  penalties.forEach((p) => { ded[p.stat] += p.deduction; });
+
+  // Wisdom
+  const books = L2_BOOKS.reduce((a, b) => a + l2BookXP(b, s.wisdom.books?.[b.id]).total, 0);
+  const dsaTotal = Object.values(s.wisdom.dsa || {}).reduce((a, n) => a + (Number(n) || 0), 0);
+  const dsaXP = Math.floor(dsaTotal / 3);
+  const w = r2(books + dsaXP);
+
+  // Vitality
+  const att = (m) => Object.values(m || {}).reduce((a, st) => a + (st === "done" || st === "leave" ? 1 : st === "deduct" ? -1 : 0), 0);
+  const mtXP = att(s.vitality.mt);
+  const wkXP = att(s.vitality.wk);
+  const runXP = Object.values(s.vitality.runKm || {}).reduce((a, km) => a + Math.floor((Number(km) || 0) / 5), 0);
+  const evXP = Number(s.vitality.events) || 0;
+  const v = r2(mtXP + wkXP + runXP + evXP - ded.vitality);
+
+  // Wealth
+  const we = r2(
+    s.wealth.invest.filter(Boolean).length * 20
+    + s.wealth.save.reduce((a, n) => a + Math.floor((Number(n) || 0) / 1000), 0)
+    + (s.wealth.stock ? 13 : 0)
+    + s.wealth.analyses.filter((x) => x.done).length * 3
+    + (s.wealth.asset ? 20 : 0)
+  );
+
+  // Resolve
+  let rHab = 0;
+  L2_DATES.forEach((ds) => {
+    if (ds > todayKey) return;
+    L2_HABITS.forEach((h) => {
+      const st = l2HabitStatus(s, ds, h.k);
+      if (st === "done") rHab += h.xp;
+      else if (st === "opt1") rHab -= h.xp;
+    });
+  });
+  const rWeek = Object.values(s.resolve.weekly || {}).reduce(
+    (a, x) => a + (x.laundry ? 1 : 0) + (x.iron ? 0.5 : 0) + (clamp(Number(x.plants) || 0, 0, 2)) * 0.25, 0);
+  const rMonth = s.resolve.bedsheets.filter(Boolean).length;
+  const r = r2(rHab + rWeek + rMonth - ded.resolve);
+
+  const total = w + v + we + r;
+  const pct = (Math.max(0, total) / 400) * 100;
+  const pending = penalties.filter((p) => !p.cleared);
+  const dayLabel = idxRaw < 1 ? `Starts ${fmtDM(L2_DATES[0])}` : idxRaw > L2_DAYS ? "Level 2 complete" : `Day ${idxRaw} / ${L2_DAYS}`;
+  return {
+    todayKey, idxRaw, w, v, we, r, total, pct, displayPct: Math.min(120, pct), penalties, pending, ded, dayLabel,
+    parts: { books, dsaTotal, dsaXP, mtXP, wkXP, runXP, evXP },
+  };
+}
+
+/* ---------- small shared bits ---------- */
+const l2Input = {
+  background: C.containerHigh, border: `1px solid ${C.outline}`, color: C.onSurface, borderRadius: 10,
+  padding: "7px 10px", fontFamily: mono, fontSize: 13, outline: "none", minWidth: 0,
+};
+function L2Chip({ children, color }) {
+  return (
+    <span style={{ fontFamily: mono, fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, color, background: mix(color, 16), border: `1px solid ${mix(color, 34)}`, borderRadius: 7, padding: "2px 6px", whiteSpace: "nowrap" }}>
+      {children}
+    </span>
+  );
+}
+function L2Btn({ children, onClick, color = C.accent, disabled, solid }) {
+  return (
+    <Touchable
+      writeAction
+      onClick={onClick}
+      disabled={disabled}
+      rippleColor={mix(color, 20)}
+      style={{
+        borderRadius: 10, padding: "8px 11px", textAlign: "center", opacity: disabled ? 0.4 : 1,
+        background: solid ? color : mix(color, 12), border: `1px solid ${mix(color, solid ? 90 : 45)}`,
+      }}
+    >
+      <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 12, color: solid ? C.surface : color }}>{children}</span>
+    </Touchable>
+  );
+}
+function L2DayNav({ ds, setDs, extra }) {
+  const i = L2_DATES.indexOf(ds);
+  const go = (n) => { const j = i + n; if (j >= 0 && j < L2_DAYS) setDs(L2_DATES[j]); };
+  const arrow = (n, Icon) => (
+    <Touchable onClick={() => go(n)} style={{ width: 34, height: 34, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <Icon size={17} color={C.onSurfaceVariant} />
+    </Touchable>
+  );
+  return (
+    <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+      {arrow(-1, ChevronLeft)}
+      <div className="text-center">
+        <div style={{ fontFamily: sans, fontWeight: 700, fontSize: 13, color: C.onSurface }}>{fmtShort(ds)}</div>
+        <div style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>Day {i + 1} · Week {l2WeekOf(ds)}{extra ? ` · ${extra}` : ""}</div>
+      </div>
+      {arrow(1, ChevronRight)}
+    </div>
+  );
+}
+function l2ClampDay(today) {
+  const k = fmtDate(today);
+  return k < L2_DATES[0] ? L2_DATES[0] : k > L2_DATES[L2_DAYS - 1] ? L2_DATES[L2_DAYS - 1] : k;
+}
+
+/* ---------- Resolve habits (used on Home and Resolve) ---------- */
+function ensureHabit(d, ds) {
+  if (!d.resolve.habits) d.resolve.habits = {};
+  if (!d.resolve.habits[ds]) d.resolve.habits[ds] = {};
+  return d.resolve.habits[ds];
+}
+function L2HabitList({ s, set, ds }) {
+  const [pick, setPick] = useState(null);
+  const color = C.resolve;
+  return (
+    <div className="flex flex-col" style={{ gap: 6 }}>
+      {L2_HABITS.map((h) => {
+        const st = l2HabitStatus(s, ds, h.k);
+        const done = st === "done";
+        const auto = (h.k === "skin" || h.k === "hair") && done && !s.resolve.habits?.[ds]?.[h.k];
+        const tagColor = st === "opt1" ? C.danger : st === "opt2" ? L2_L3_COLOR : color;
+        return (
+          <div key={h.k}>
+            <SwipeRow
+              done={done}
+              color={color}
+              onToggle={() => set((d) => { const hs = ensureHabit(d, ds); if (hs[h.k] === "done") delete hs[h.k]; else hs[h.k] = "done"; })}
+            >
+              <div style={{ ...swipeCardStyle(done, color, "9px 12px"), borderLeft: `3px solid ${st === "opt1" ? C.danger : st === "opt2" ? L2_L3_COLOR : done ? color : C.outlineVariant}` }}>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div style={{ color: done ? C.faint : C.onSurface, fontSize: 13, textDecoration: done ? "line-through" : "none" }}>{h.label}</div>
+                    <div className="flex items-center gap-1.5" style={{ marginTop: 2 }}>
+                      <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>+{h.xp} XP</span>
+                      {auto && <L2Chip color={C.accent}>AUTO</L2Chip>}
+                      {st === "opt1" && <L2Chip color={tagColor}>L1 · −{h.xp} XP</L2Chip>}
+                      {st === "opt2" && <L2Chip color={tagColor}>L3 · no deduction</L2Chip>}
+                    </div>
+                  </div>
+                  <Touchable writeAction onClick={() => setPick(pick === h.k ? null : h.k)} style={{ padding: "5px 9px", borderRadius: 8, border: `1px solid ${C.outline}` }}>
+                    <span style={{ fontFamily: sans, fontSize: 11, fontWeight: 600, color: C.onSurfaceVariant }}>Missed</span>
+                  </Touchable>
+                </div>
+              </div>
+            </SwipeRow>
+            {pick === h.k && (
+              <div className="flex flex-col gap-1.5" style={{ margin: "6px 0 2px", padding: 10, background: C.containerHigh, borderRadius: 12, border: `1px solid ${C.outlineVariant}` }}>
+                <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>The habit stays incomplete either way.</span>
+                <L2Btn color={C.danger} onClick={() => { set((d) => { ensureHabit(d, ds)[h.k] = "opt1"; }); setPick(null); }}>
+                  Option 1 · L1 media ban + lose {h.xp} XP
+                </L2Btn>
+                <L2Btn color={L2_L3_COLOR} onClick={() => { set((d) => { ensureHabit(d, ds)[h.k] = "opt2"; }); setPick(null); }}>
+                  Option 2 · L3 read an extra chapter, no XP loss
+                </L2Btn>
+                {st && !done && <L2Btn color={C.onSurfaceVariant} onClick={() => { set((d) => { delete ensureHabit(d, ds)[h.k]; }); setPick(null); }}>Clear</L2Btn>}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ---------- Attendance grid (Muay Thai + strength workouts) ---------- */
+function L2AttendanceGrid({ kind, s, set, today }) {
+  const color = C.vitality;
+  const v = s.vitality;
+  const map = (kind === "mt" ? v.mt : v.wk) || {};
+  const days = kind === "mt" ? v.mtDays : v.wkDays;
+  const leaveAllow = L2_LEAVES[kind];
+  const leavesUsed = Object.values(map).filter((x) => x === "leave").length;
+  const penLevel = kind === "mt" ? 7 : 5;
+  const todayKey = fmtDate(today);
+  const curWeek = clamp(Math.ceil(l2DayIndex(today) / 7), 1, L2_WEEKS);
+  const [openW, setOpenW] = useState(curWeek);
+  const [sel, setSel] = useState(null);
+  const put = (ds, st) => set((d) => {
+    const m = kind === "mt" ? d.vitality.mt : d.vitality.wk;
+    if (!st) delete m[ds]; else m[ds] = st;
+  });
+  const stColor = { done: color, leave: C.accent, penalty: C.danger, deduct: C.danger };
+  const stText = { done: "✓", leave: "L", penalty: "P", deduct: "−1" };
+  const selPlanned = sel ? days.includes(parseDS(sel).getDay()) : false;
+  return (
+    <div>
+      <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 8 }}>
+        {kind === "mt" ? "4 sessions a week, never Fridays." : "5 workouts a week."} Leaves used{" "}
+        <span style={{ fontFamily: mono, color: C.accent }}>{leavesUsed} / {leaveAllow}</span>
+      </p>
+      <div className="flex items-center gap-1.5 flex-wrap" style={{ marginBottom: 8 }}>
+        <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>PLANNED DAYS</span>
+        {[0, 1, 2, 3, 4, 5, 6].map((wd) => {
+          const on = days.includes(wd);
+          const blocked = kind === "mt" && wd === 5;
+          return (
+            <Touchable
+              key={wd}
+              writeAction
+              disabled={blocked}
+              onClick={() => set((d) => {
+                const arr = kind === "mt" ? d.vitality.mtDays : d.vitality.wkDays;
+                const i = arr.indexOf(wd);
+                if (i >= 0) arr.splice(i, 1); else arr.push(wd);
+                arr.sort();
+              })}
+              style={{ width: 26, height: 26, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", opacity: blocked ? 0.25 : 1, background: on ? color : C.containerHigh, border: `1px solid ${on ? color : C.outline}` }}
+            >
+              <span style={{ fontFamily: mono, fontSize: 11, fontWeight: 700, color: on ? C.surface : C.onSurfaceVariant }}>{["S", "M", "T", "W", "T", "F", "S"][wd]}</span>
+            </Touchable>
+          );
+        })}
+      </div>
+      {Array.from({ length: L2_WEEKS }, (_, i) => i + 1).map((w) => {
+        const ds = l2WeekDates(w);
+        const got = ds.filter((x) => map[x] === "done" || map[x] === "leave").length;
+        const open = openW === w;
+        return (
+          <div key={w} style={{ marginBottom: 6 }}>
+            <Touchable onClick={() => setOpenW(open ? null : w)} style={{ borderRadius: 10, background: w === curWeek ? mix(color, 10) : C.containerHigh, border: `1px solid ${w === curWeek ? mix(color, 40) : C.outlineVariant}` }}>
+              <div className="flex items-center justify-between" style={{ padding: "8px 12px" }}>
+                <span style={{ fontFamily: sans, fontWeight: 600, fontSize: 12.5, color: C.onSurface }}>Week {w} <span style={{ fontFamily: mono, color: C.faint, fontWeight: 400, fontSize: 10.5 }}>· {weekLabel(w)}</span></span>
+                <span style={{ fontFamily: mono, fontSize: 11, color }}>{got} / {days.length}</span>
+              </div>
+            </Touchable>
+            {open && (
+              <div className="grid grid-cols-7 gap-1.5" style={{ marginTop: 6 }}>
+                {ds.map((x) => {
+                  const wd = parseDS(x).getDay();
+                  const planned = days.includes(wd);
+                  const st = map[x];
+                  const future = x > todayKey;
+                  const blocked = future || (kind === "mt" && wd === 5);
+                  const isSel = sel === x;
+                  return (
+                    <Touchable
+                      key={x}
+                      writeAction
+                      disabled={blocked}
+                      onClick={() => setSel(isSel ? null : x)}
+                      style={{
+                        borderRadius: 9, padding: "5px 0", textAlign: "center", opacity: blocked ? 0.3 : 1,
+                        background: st ? mix(stColor[st], 22) : C.containerHigh,
+                        border: `1.5px ${planned || st ? "solid" : "dashed"} ${isSel ? C.onSurface : st ? stColor[st] : planned ? mix(color, 55) : C.outlineVariant}`,
+                      }}
+                    >
+                      <div style={{ fontFamily: mono, fontSize: 9, color: C.faint }}>{["S", "M", "T", "W", "T", "F", "S"][wd]}</div>
+                      <div style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: st ? stColor[st] : C.onSurfaceVariant }}>{st ? stText[st] : parseDS(x).getDate()}</div>
+                    </Touchable>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {sel && (
+        <div className="flex flex-col gap-1.5" style={{ marginTop: 8, padding: 10, background: C.containerHigh, borderRadius: 12, border: `1px solid ${mix(color, 40)}` }}>
+          <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 12.5, color: C.onSurface }}>{fmtShort(sel)} · {selPlanned ? "planned" : "extra session"}</span>
+          <L2Btn color={color} solid onClick={() => { put(sel, "done"); setSel(null); }}>Done · +1 XP</L2Btn>
+          {selPlanned && (
+            <>
+              <L2Btn color={C.accent} disabled={leavesUsed >= leaveAllow && map[sel] !== "leave"} onClick={() => { put(sel, "leave"); setSel(null); }}>
+                Use a leave · +1 XP, no penalty ({leaveAllow - leavesUsed} left)
+              </L2Btn>
+              <L2Btn color={C.danger} onClick={() => { put(sel, "penalty"); setSel(null); }}>Accept penalty · L{penLevel}</L2Btn>
+              <L2Btn color={C.danger} onClick={() => { put(sel, "deduct"); setSel(null); }}>Take −1 XP instead of the penalty</L2Btn>
+            </>
+          )}
+          {map[sel] && <L2Btn color={C.onSurfaceVariant} onClick={() => { put(sel, ""); setSel(null); }}>Clear</L2Btn>}
+        </div>
+      )}
+      <p style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginTop: 8 }}>✓ done · L leave · P penalty · −1 XP deducted · dashed = unplanned day</p>
+    </div>
+  );
+}
+
+/* ---------- Home ---------- */
+function QuestStripL2({ cx, compact }) {
+  const idx = clamp(cx.idxRaw, 0, L2_DAYS);
+  const cur = clamp(Math.ceil(idx / 7), 1, L2_WEEKS);
+  return (
+    <div className="flex gap-1 px-4" style={{ paddingTop: compact ? 4 : 10, paddingBottom: 6, flexShrink: 0 }}>
+      {Array.from({ length: L2_WEEKS }, (_, i) => {
+        const w = i + 1;
+        const filled = idx >= w * 7;
+        const here = w === cur && idx >= 1 && idx <= L2_DAYS;
+        return <div key={w} style={{ flex: 1, height: 5, borderRadius: 3, background: filled ? C.accent : here ? mix(C.accent, 55) : C.outlineVariant, boxShadow: here ? `0 0 6px ${C.glow}` : "none" }} />;
+      })}
+    </div>
+  );
+}
+
+function L2HomeTab({ cx, s, set, today, setTab, l1Total }) {
+  const ds = cx.todayKey;
+  const inRange = cx.idxRaw >= 1 && cx.idxRaw <= L2_DAYS;
+  const v = s.vitality;
+  const target = dsaTarget(ds);
+  const solved = Number(s.wisdom.dsa?.[ds]) || 0;
+  const wd = today.getDay();
+  const plannedToday = [
+    { k: "mt", label: "Muay Thai session", on: v.mtDays.includes(wd) && wd !== 5, map: v.mt },
+    { k: "wk", label: "Strength workout", on: v.wkDays.includes(wd), map: v.wk },
+  ].filter((x) => x.on);
+  const worst = cx.pending.reduce((m, p) => Math.max(m, p.level), 0);
+  const rows = [
+    { icon: BookOpen, label: "Wisdom", color: C.wisdom, xp: cx.w, tag: "Books & daily DSA", tab: "wisdom" },
+    { icon: Dumbbell, label: "Vitality", color: C.vitality, xp: cx.v, tag: "Muay Thai, workouts, running", tab: "vitality" },
+    { icon: Coins, label: "Wealth", color: C.wealth, xp: cx.we, tag: "Investing, saving & assets", tab: "wealth" },
+    { icon: ShieldCheck, label: "Resolve", color: C.resolve, xp: cx.r, tag: "Daily habits & routines", tab: "resolve" },
+  ];
+  return (
+    <div className="pb-4 px-4 pt-3">
+      {!inRange && (
+        <div style={{ background: mix(C.accent, 12), border: `1px solid ${mix(C.accent, 35)}`, borderRadius: 12, padding: "10px 12px", marginBottom: 10 }}>
+          <span style={{ color: C.onSurface, fontSize: 12.5 }}>
+            {cx.idxRaw < 1 ? `Level 2 begins on 1 Nov 2026 — ${1 - cx.idxRaw} day${1 - cx.idxRaw === 1 ? "" : "s"} to go. You can set up books, planned days and the workout library now.` : "Level 2 has ended."}
+          </span>
+        </div>
+      )}
+      <div style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 14, padding: "10px 14px", marginBottom: 10 }} className="flex items-center justify-between">
+        <div>
+          <div style={{ fontFamily: mono, fontSize: 9.5, color: C.faint, letterSpacing: 0.5 }}>LEVEL 2 XP</div>
+          <div style={{ fontFamily: sans, fontWeight: 900, fontSize: 20, color: C.onSurface }}>{Math.round(cx.total * 10) / 10}<span style={{ fontFamily: mono, fontSize: 11, color: C.faint, fontWeight: 400 }}> / 400 · {Math.round(cx.pct)}%{cx.pct > 120 ? " (shown 120%)" : ""}</span></div>
+        </div>
+        {l1Total != null && (
+          <div className="text-right">
+            <div style={{ fontFamily: mono, fontSize: 9.5, color: C.faint, letterSpacing: 0.5 }}>CAREER XP</div>
+            <div style={{ fontFamily: mono, fontSize: 15, fontWeight: 700, color: C.accent }}>{Math.round((l1Total + Math.max(0, cx.total)) * 10) / 10}</div>
+            <div style={{ fontFamily: mono, fontSize: 9.5, color: C.faint }}>L1 {Math.round(l1Total)} + L2 {Math.round(cx.total)}</div>
+          </div>
+        )}
+      </div>
+
+      {inRange && (
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontFamily: sans, fontWeight: 700, fontSize: 11.5, color: C.faint, letterSpacing: 0.4, marginBottom: 6 }}>TODAY</div>
+          <div className="flex items-center justify-between" style={{ background: C.containerHigh, border: `1px solid ${solved >= target ? mix(C.wisdom, 40) : C.outlineVariant}`, borderLeft: `3px solid ${solved >= target ? C.wisdom : C.outlineVariant}`, borderRadius: 12, padding: "8px 12px", marginBottom: 6 }}>
+            <div>
+              <div style={{ color: C.onSurface, fontSize: 13 }}>DSA questions</div>
+              <div style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>target {target} today</div>
+            </div>
+            <Counter value={solved} max={30} color={C.wisdom} onChange={(n) => set((d) => { if (n) d.wisdom.dsa[ds] = n; else delete d.wisdom.dsa[ds]; })} />
+          </div>
+          {plannedToday.map((p) => {
+            const st = p.map[ds];
+            return (
+              <div key={p.k} style={{ marginBottom: 6 }}>
+                <SwipeRow done={st === "done"} color={C.vitality} onToggle={() => set((d) => { const m = p.k === "mt" ? d.vitality.mt : d.vitality.wk; if (m[ds] === "done") delete m[ds]; else m[ds] = "done"; })}>
+                  <div style={swipeCardStyle(st === "done", C.vitality, "10px 12px")}>
+                    <div className="flex items-center justify-between">
+                      <span style={{ color: st === "done" ? C.faint : C.onSurface, fontSize: 13, textDecoration: st === "done" ? "line-through" : "none" }}>{p.label}</span>
+                      {st && st !== "done" && <L2Chip color={C.danger}>{st.toUpperCase()}</L2Chip>}
+                    </div>
+                  </div>
+                </SwipeRow>
+              </div>
+            );
+          })}
+          <L2HabitList s={s} set={set} ds={ds} />
+        </div>
+      )}
+
+      {cx.pending.length > 0 && (
+        <Touchable onClick={() => setTab("penalties")} style={{ background: mix(C.danger, 10), border: `1px solid ${mix(C.danger, 40)}`, borderRadius: 14, display: "block", marginBottom: 10 }}>
+          <div className="flex items-center gap-3 px-4 py-3">
+            <Swords size={18} color={C.danger} />
+            <span style={{ color: C.onSurface, fontSize: 12.5 }}>
+              <b>{cx.pending.length}</b> pending penalt{cx.pending.length === 1 ? "y" : "ies"} · highest L{worst}
+            </span>
+            <ChevronRight size={16} color={C.faint} style={{ marginLeft: "auto" }} />
+          </div>
+        </Touchable>
+      )}
+
+      {rows.map((r) => (
+        <AttrRow key={r.label} icon={r.icon} label={r.label} score={r.xp} color={r.color} tagline={`${r.tag} · ${r2(r.xp)} XP${r.xp >= 100 ? " · target met" : ""}`} onClick={() => setTab(r.tab)} />
+      ))}
+    </div>
+  );
+}
+
+/* ---------- Wisdom ---------- */
+function L2WisdomTab({ cx, s, set, today }) {
+  const color = C.wisdom;
+  const [ds, setDs] = useState(() => l2ClampDay(today));
+  const target = dsaTarget(ds);
+  const solved = Number(s.wisdom.dsa?.[ds]) || 0;
+  const weekSolved = (w) => l2WeekDates(w).reduce((a, x) => a + (Number(s.wisdom.dsa?.[x]) || 0), 0);
+  return (
+    <div className="pb-4">
+      <ScreenHeader title="Wisdom" sub="Reading and daily DSA." color={color} score={cx.w} />
+      {L2_BOOKS.map((b) => {
+        const bs = s.wisdom.books[b.id];
+        const x = l2BookXP(b, bs);
+        return (
+          <Mission key={b.id} title={b.title} points={b.reading + b.bonus} earned={x.total} color={color}>
+            <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+              <span style={{ color: C.onSurfaceVariant, fontSize: 12.5 }}>Chapters read</span>
+              <Counter value={x.done} max={x.ch} color={color} onChange={(n) => set((d) => { d.wisdom.books[b.id].done = n; })} />
+            </div>
+            <div style={{ height: 5, background: C.outlineVariant, borderRadius: 3, overflow: "hidden", marginBottom: 8 }}>
+              <div style={{ height: "100%", width: `${(x.done / x.ch) * 100}%`, background: color, transition: "width 0.3s ease" }} />
+            </div>
+            <div className="flex items-center justify-between">
+              <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint }}>
+                {r2(x.reading)} / {b.reading} reading XP · {x.bonus ? `+${b.bonus} bonus earned` : `+${b.bonus} on finishing`}
+              </span>
+              <div className="flex items-center gap-2">
+                <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>chapters</span>
+                <Stepper value={x.ch} min={1} max={99} color={color} onChange={(n) => set((d) => { d.wisdom.books[b.id].chapters = n; if (d.wisdom.books[b.id].done > n) d.wisdom.books[b.id].done = n; })} />
+              </div>
+            </div>
+          </Mission>
+        );
+      })}
+      <Mission title="DSA practice" points={39} earned={cx.parts.dsaXP} color={color} defaultOpen>
+        <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 8 }}>
+          Weekdays 1 question, weekends 2 (9 a week). Every 3 solved = 1 XP; extras count too.
+        </p>
+        <L2DayNav ds={ds} setDs={setDs} />
+        <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
+          <span style={{ color: C.onSurface, fontSize: 13 }}>Solved <span style={{ fontFamily: mono, color: C.faint }}>· target {target}</span></span>
+          <Counter value={solved} max={30} color={color} onChange={(n) => set((d) => { if (n) d.wisdom.dsa[ds] = n; else delete d.wisdom.dsa[ds]; })} />
+        </div>
+        <div style={{ fontFamily: mono, fontSize: 11, color: C.onSurfaceVariant, marginBottom: 6 }}>
+          Total {cx.parts.dsaTotal} solved · {cx.parts.dsaTotal % 3} toward the next XP · baseline 117
+        </div>
+        <div className="grid grid-cols-4 gap-1.5">
+          {Array.from({ length: L2_WEEKS }, (_, i) => i + 1).map((w) => {
+            const n = weekSolved(w);
+            return (
+              <div key={w} style={{ borderRadius: 8, padding: "4px 0", textAlign: "center", background: n >= 9 ? mix(color, 22) : C.containerHigh, border: `1px solid ${n >= 9 ? color : C.outlineVariant}` }}>
+                <div style={{ fontFamily: mono, fontSize: 9, color: C.faint }}>W{w}</div>
+                <div style={{ fontFamily: mono, fontSize: 11.5, color: n >= 9 ? color : C.onSurfaceVariant }}>{n}/9</div>
+              </div>
+            );
+          })}
+        </div>
+      </Mission>
+    </div>
+  );
+}
+
+/* ---------- Vitality ---------- */
+function L2VitalityTab({ cx, s, set, today, onOpenProgress }) {
+  const color = C.vitality;
+  const v = s.vitality;
+  const todayKey = fmtDate(today);
+  const weekRun = (w) => Number(v.runKm?.[w]) || 0;
+  return (
+    <div className="pb-4">
+      <ScreenHeader title="Vitality" sub="Muay Thai, strength, running and events." color={color} score={cx.v} />
+      <Touchable onClick={onOpenProgress} style={{ background: C.container, border: `1px solid ${mix(C.accent, 50)}`, borderRadius: 12, display: "block", margin: "0 16px 12px" }}>
+        <div className="flex items-center justify-between px-4 py-2.5">
+          <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 11, letterSpacing: 0.5, color: C.accent }}>WORKOUT PROGRESS</span>
+          <ChevronRight size={15} color={C.accent} />
+        </div>
+      </Touchable>
+      <WorkoutCard s={v} set={set} locked={false} />
+      <Mission title="Muay Thai" points={v.mtDays.length * L2_WEEKS} earned={cx.parts.mtXP} color={color}>
+        <L2AttendanceGrid kind="mt" s={s} set={set} today={today} />
+      </Mission>
+      <Mission title="Strength workouts" points={v.wkDays.length * L2_WEEKS} earned={cx.parts.wkXP} color={color}>
+        <L2AttendanceGrid kind="wk" s={s} set={set} today={today} />
+      </Mission>
+      <Mission title="Treks & marathons" points={8} earned={cx.parts.evXP} color={color}>
+        <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 8 }}>8 events in total, any mix of treks and marathons. Each is 1 XP, and events beyond 8 keep earning 1 XP each.</p>
+        <div className="flex items-center gap-2">
+          <Mountain size={16} color={color} />
+          <Counter value={Number(v.events) || 0} max={99} color={color} onChange={(n) => set((d) => { d.vitality.events = n; })} />
+        </div>
+      </Mission>
+      <Mission title="Running" points={26} earned={cx.parts.runXP} color={color}>
+        <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 8 }}>
+          10 km minimum per week; every complete 5 km = 1 XP. Marathon distances don't count. Under 10 km after the week ends triggers L6.
+        </p>
+        {Array.from({ length: L2_WEEKS }, (_, i) => i + 1).map((w) => {
+          const km = weekRun(w);
+          const ended = L2_DATES[w * 7 - 1] < todayKey;
+          const short = ended && km < 10;
+          return (
+            <div key={w} className="flex items-center gap-2" style={{ marginBottom: 6 }}>
+              <span style={{ fontFamily: mono, fontSize: 11, color: C.faint, width: 30 }}>W{w}</span>
+              <span style={{ fontFamily: mono, fontSize: 10, color: C.faint, flex: 1 }}>{weekLabel(w)}</span>
+              <input
+                type="number" inputMode="decimal" min="0" step="0.1"
+                value={v.runKm?.[w] ?? ""}
+                placeholder="0"
+                onChange={(e) => set((d) => { const n = parseFloat(e.target.value); if (isFinite(n) && n > 0) d.vitality.runKm[w] = n; else delete d.vitality.runKm[w]; })}
+                style={{ ...l2Input, width: 62, textAlign: "right", borderColor: short ? C.danger : C.outline }}
+              />
+              <span style={{ fontFamily: mono, fontSize: 10.5, color: C.onSurfaceVariant, width: 48 }}>km · {Math.floor(km / 5)} XP</span>
+            </div>
+          );
+        })}
+        <p style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginTop: 4 }}>Distance under 5 km does not carry to the next week.</p>
+      </Mission>
+    </div>
+  );
+}
+
+/* ---------- Wealth ---------- */
+function L2WealthTab({ cx, s, set }) {
+  const color = C.wealth;
+  const w = s.wealth;
+  const row = (checked, onClick, text, right) => (
+    <label className="flex items-center gap-1">
+      <Check2 checked={checked} color={color} onClick={onClick} />
+      <span style={{ color: C.onSurfaceVariant, fontSize: 13, flex: 1 }}>{text}</span>
+      {right}
+    </label>
+  );
+  const investXP = w.invest.filter(Boolean).length * 20;
+  const saveXP = w.save.reduce((a, n) => a + Math.floor((Number(n) || 0) / 1000), 0);
+  const doneAn = w.analyses.filter((x) => x.done).length;
+  return (
+    <div className="pb-4">
+      <ScreenHeader title="Wealth" sub="Investing, saving and financial knowledge." color={color} score={cx.we} />
+      <Mission title="Monthly investing" points={60} earned={investXP} color={color}>
+        {L2_MONTHS.map((m, i) => row(
+          !!w.invest[i],
+          () => set((d) => { d.wealth.invest[i] = d.wealth.invest[i] ? "" : fmtDate(new Date()); }),
+          `${m} · 20 XP`,
+          w.invest[i] ? <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>marked {fmtDM(w.invest[i])}</span> : null
+        ))}
+      </Mission>
+      <Mission title="Savings" points={30} earned={saveXP} color={color}>
+        <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 8 }}>₹10,000 a month target. 1 XP per ₹1,000 saved; saving more earns more.</p>
+        {L2_MONTHS.map((m, i) => {
+          const amt = Number(w.save[i]) || 0;
+          return (
+            <div key={m} className="flex items-center gap-2" style={{ marginBottom: 8 }}>
+              <span style={{ color: C.onSurface, fontSize: 13, width: 78 }}>{m}</span>
+              <span style={{ fontFamily: mono, color: C.faint, fontSize: 12 }}>₹</span>
+              <input
+                type="number" inputMode="numeric" min="0" step="500"
+                value={amt || ""} placeholder="0"
+                onChange={(e) => set((d) => { d.wealth.save[i] = Math.max(0, parseFloat(e.target.value) || 0); })}
+                style={{ ...l2Input, flex: 1, textAlign: "right" }}
+              />
+              <span style={{ fontFamily: mono, fontSize: 11, color: amt >= 10000 ? color : C.onSurfaceVariant, width: 52, textAlign: "right" }}>{Math.floor(amt / 1000)} XP</span>
+            </div>
+          );
+        })}
+      </Mission>
+      <Mission title="Stock market knowledge" points={13} earned={w.stock ? 13 : 0} color={color}>
+        <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 4 }}>Learn the basics over about four weeks in November. Mark it done when you've finished.</p>
+        {row(w.stock, () => set((d) => { d.wealth.stock = !d.wealth.stock; }), "Finished learning the basics")}
+      </Mission>
+      <Mission title="Company analysis" points={27} earned={doneAn * 3} color={color}>
+        <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 6 }}>One company a week for 9 weeks (December – January), 3 XP each. {doneAn} / 9 done.</p>
+        {w.analyses.map((a, i) => (
+          <div key={i} className="flex items-center gap-1">
+            <Check2 checked={a.done} color={color} onClick={() => set((d) => { d.wealth.analyses[i].done = !d.wealth.analyses[i].done; })} />
+            <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint, width: 22 }}>{i + 1}.</span>
+            <input
+              value={a.company} placeholder="Company"
+              onChange={(e) => set((d) => { d.wealth.analyses[i].company = e.target.value; })}
+              style={{ ...l2Input, flex: 1, fontFamily: sans }}
+            />
+          </div>
+        ))}
+      </Mission>
+      <Mission title="Income-generating asset" points={20} earned={w.asset ? 20 : 0} color={color}>
+        <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 4 }}>Any amount counts. Mark it once you've invested in or built one.</p>
+        {row(w.asset, () => set((d) => { d.wealth.asset = !d.wealth.asset; }), "Invested in or built an income asset")}
+      </Mission>
+    </div>
+  );
+}
+
+/* ---------- Resolve ---------- */
+function L2ResolveTab({ cx, s, set, today, careOpen, setCareOpen }) {
+  const color = C.resolve;
+  const [ds, setDs] = useState(() => l2ClampDay(today));
+  const i = L2_DATES.indexOf(ds);
+  const wk = l2WeekOf(ds);
+  const wlog = s.resolve.weekly?.[wk] || {};
+  const setW = (patch) => set((d) => { if (!d.resolve.weekly[wk]) d.resolve.weekly[wk] = {}; Object.assign(d.resolve.weekly[wk], patch); });
+  const shiftDay = (n) => { const j = i + n; if (j >= 0 && j < L2_DAYS) setDs(L2_DATES[j]); };
+  const dayXP = r2(L2_HABITS.reduce((a, h) => { const st = l2HabitStatus(s, ds, h.k); return a + (st === "done" ? h.xp : st === "opt1" ? -h.xp : 0); }, 0));
+  const weekRow = (label, done, xp, onToggle) => (
+    <div style={{ marginBottom: 6 }}>
+      <SwipeRow done={done} color={color} onToggle={onToggle}>
+        <div style={swipeCardStyle(done, color, "10px 12px")}>
+          <div className="flex items-center justify-between">
+            <span style={{ color: done ? C.faint : C.onSurface, fontSize: 13, textDecoration: done ? "line-through" : "none" }}>{label}</span>
+            <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint }}>+{xp} XP</span>
+          </div>
+        </div>
+      </SwipeRow>
+    </div>
+  );
+  return (
+    <div className="pb-4">
+      <ScreenHeader title="Resolve" sub="Daily habits and household routines." color={color} score={cx.r} />
+      <div className="mx-4">
+        <L2DayNav ds={ds} setDs={setDs} extra={`${dayXP >= 0 ? "+" : ""}${dayXP} XP`} />
+      </div>
+      <div className="mx-4 mb-3">
+        <SwipeHint />
+        <L2HabitList key={ds} s={s} set={set} ds={ds} />
+      </div>
+      <CareOverviewTiles care={s.care} open={careOpen} onToggle={(w) => setCareOpen(careOpen === w ? null : w)} />
+      {careOpen && <CareDropdown which={careOpen} care={s.care} dateKey={ds} idx={i + 1} weekNum={wk} shiftDay={shiftDay} set={set} />}
+      <Mission title={`Week ${wk} chores`} rightLabel={`${r2((wlog.laundry ? 1 : 0) + (wlog.iron ? 0.5 : 0) + (clamp(Number(wlog.plants) || 0, 0, 2)) * 0.25)} / 2 XP`} color={color} defaultOpen>
+        {weekRow("Laundry", !!wlog.laundry, 1, () => setW({ laundry: !wlog.laundry }))}
+        {weekRow("Ironing", !!wlog.iron, 0.5, () => setW({ iron: !wlog.iron }))}
+        <div className="flex items-center justify-between" style={{ padding: "4px 2px" }}>
+          <span style={{ color: C.onSurface, fontSize: 13 }}>Water plants <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint }}>· twice a week, 0.25 XP each</span></span>
+          <Stepper value={clamp(Number(wlog.plants) || 0, 0, 2)} min={0} max={2} color={color} onChange={(n) => setW({ plants: n })} />
+        </div>
+      </Mission>
+      <Mission title="Change bedsheets" points={3} earned={s.resolve.bedsheets.filter(Boolean).length} color={color}>
+        {L2_MONTHS.map((m, k) => (
+          <label key={m} className="flex items-center gap-1">
+            <Check2 checked={!!s.resolve.bedsheets[k]} color={color} onClick={() => set((d) => { d.resolve.bedsheets[k] = !d.resolve.bedsheets[k]; })} />
+            <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>{m} · 1 XP</span>
+          </label>
+        ))}
+      </Mission>
+    </div>
+  );
+}
+
+/* ---------- Penalties ---------- */
+function L2PenaltiesTab({ cx, s, set, today }) {
+  const todayKey = fmtDate(today);
+  const pending = cx.pending;
+  const done = cx.penalties.filter((p) => p.cleared).slice(0, 15);
+  const addManual = (label, level) => set((d) => { d.penalties.manual.push({ id: "m-" + uid(), label, level, since: todayKey, stat: "vitality" }); });
+  const card = (p) => (
+    <div key={p.id} style={{ background: C.container, border: `1px solid ${p.cleared ? C.outlineVariant : mix(C.danger, 40)}`, borderLeft: `3px solid ${p.cleared ? C.outlineVariant : C.danger}`, borderRadius: 12, padding: 12, marginBottom: 8, opacity: p.cleared ? 0.6 : 1 }}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div style={{ color: C.onSurface, fontSize: 13, fontWeight: 600 }}>{p.label}</div>
+          <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginTop: 2 }}>{p.source} · since {fmtDM(p.since)} · deadline {fmtDM(p.deadline)}</div>
+        </div>
+        <L2Chip color={p.level >= 6 ? C.danger : L2_L3_COLOR}>L{p.level}</L2Chip>
+      </div>
+      <div style={{ color: C.onSurfaceVariant, fontSize: 12.5, marginTop: 6 }}>{L2_LADDER[p.level]}</div>
+      {!p.cleared && (
+        <div style={{ fontFamily: mono, fontSize: 10.5, color: C.faint, marginTop: 4 }}>
+          {p.paused ? "Paused (ill / injured) — level and XP loss are frozen" : `${p.overdue} day${p.overdue === 1 ? "" : "s"} overdue${p.deduction ? ` · −${r2(p.deduction)} XP so far` : p.late === 0 ? " · XP loss starts after the deadline" : ""}`}
+        </div>
+      )}
+      {!p.cleared && (
+        <div className="flex gap-2" style={{ marginTop: 8 }}>
+          <div style={{ flex: 1 }}><L2Btn color={C.resolve} solid onClick={() => set((d) => { d.penalties.cleared[p.id] = todayKey; })}>Done — clear it</L2Btn></div>
+          {p.physical && !p.paused && <div style={{ flex: 1 }}><L2Btn color={C.onSurfaceVariant} onClick={() => set((d) => { d.penalties.paused[p.id] = todayKey; })}>Pause (ill/injured)</L2Btn></div>}
+          {p.paused && <div style={{ flex: 1 }}><L2Btn color={C.accent} onClick={() => set((d) => { const n = daysBetween(d.penalties.paused[p.id], todayKey); d.penalties.shift[p.id] = (d.penalties.shift[p.id] || 0) + n; delete d.penalties.paused[p.id]; })}>Resume</L2Btn></div>}
+        </div>
+      )}
+    </div>
+  );
+  return (
+    <div className="pb-4">
+      <div className="px-4 pt-5 pb-3 flex items-center gap-2">
+        <Diamond size={7} color={C.danger} glow />
+        <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 17, letterSpacing: 0.3 }}>PENALTIES</div>
+        <span style={{ marginLeft: "auto", fontFamily: mono, fontSize: 11, color: C.danger }}>{pending.length} pending</span>
+      </div>
+      <div className="mx-4">
+        {pending.length === 0 && <p style={{ color: C.faint, fontSize: 12.5, marginBottom: 12 }}>Nothing owed. Misses you choose to penalise appear here automatically.</p>}
+        {pending.map(card)}
+        <div style={{ fontFamily: sans, fontWeight: 700, fontSize: 11.5, color: C.faint, letterSpacing: 0.4, margin: "14px 0 6px" }}>LOG A PENALTY</div>
+        <div className="flex gap-2" style={{ marginBottom: 12 }}>
+          <div style={{ flex: 1 }}><L2Btn color={C.danger} onClick={() => addManual("Low protein intake", 2)}>Low protein · L2</L2Btn></div>
+          <div style={{ flex: 1 }}><L2Btn color={C.danger} onClick={() => addManual("Diet cheat / violation", 5)}>Diet violation · L5</L2Btn></div>
+        </div>
+      </div>
+      <Mission title="Penalty ladder" rightLabel="L1 – L7" color={C.danger}>
+        {Object.entries(L2_LADDER).map(([lv, txt]) => (
+          <div key={lv} className="flex gap-2" style={{ marginBottom: 6 }}>
+            <L2Chip color={Number(lv) >= 6 ? C.danger : L2_L3_COLOR}>L{lv}</L2Chip>
+            <span style={{ color: C.onSurfaceVariant, fontSize: 12.5 }}>{txt}</span>
+          </div>
+        ))}
+        <p style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginTop: 8, lineHeight: 1.5 }}>
+          +1 level per overdue day (max L7). After the end of the week it arose in, each extra day costs {L2_OVERDUE_DEDUCT} XP (max {L2_OVERDUE_CAP} per penalty). Illness or injury: pause physical penalties instead of forcing them.
+        </p>
+      </Mission>
+      {done.length > 0 && (
+        <Mission title="Cleared" rightLabel={`${done.length}`} color={C.faint}>
+          {done.map(card)}
+        </Mission>
+      )}
+    </div>
+  );
+}
+
+/* ---------- router ---------- */
+function Level2Tabs({ tab, cx, s, set, today, setTab, l1Total, careOpen, setCareOpen }) {
+  if (tab === "dashboard") return <L2HomeTab cx={cx} s={s} set={set} today={today} setTab={setTab} l1Total={l1Total} />;
+  if (tab === "wisdom") return <L2WisdomTab cx={cx} s={s} set={set} today={today} />;
+  if (tab === "vitality") return <L2VitalityTab cx={cx} s={s} set={set} today={today} onOpenProgress={() => setTab("progress")} />;
+  if (tab === "wealth") return <L2WealthTab cx={cx} s={s} set={set} />;
+  if (tab === "resolve") return <L2ResolveTab cx={cx} s={s} set={set} today={today} careOpen={careOpen} setCareOpen={setCareOpen} />;
+  if (tab === "penalties") return <L2PenaltiesTab cx={cx} s={s} set={set} today={today} />;
+  return null;
+}
+
+/* ---------- level switcher (replaces the static LEVEL pill) ---------- */
+function LevelPill({ level, onSwitch, l1Archived }) {
+  const [open, setOpen] = useState(false);
+  const started2 = l2DayIndex(new Date()) >= 1;
+  const opts = [
+    { n: 1, range: "2 Aug – 31 Oct 2026", chip: l1Archived ? "ARCHIVED · VIEW ONLY" : "ACTIVE" },
+    { n: 2, range: "1 Nov 2026 – 30 Jan 2027", chip: started2 ? "ACTIVE" : "UPCOMING" },
+  ];
+  return (
+    <div style={{ position: "relative" }}>
+      <Touchable
+        onClick={() => setOpen((o) => !o)}
+        style={{ fontFamily: mono, fontWeight: 700, fontSize: 9.5, letterSpacing: 0.5, color: C.accent, background: mix(C.accent, 16), border: `1px solid ${mix(C.accent, 30)}`, borderRadius: 8, padding: "3px 6px 3px 7px", display: "flex", alignItems: "center", gap: 3 }}
+      >
+        LEVEL {level}
+        <ChevronDown size={11} />
+      </Touchable>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 25 }} />
+          <div style={{ position: "absolute", top: 30, left: 0, zIndex: 26, minWidth: 224, background: C.containerHighest, border: `1px solid ${C.outlineVariant}`, borderRadius: 14, boxShadow: "0 12px 28px rgba(0,0,0,0.4)", overflow: "hidden" }}>
+            {opts.map((o) => (
+              <Touchable key={o.n} onClick={() => { setOpen(false); onSwitch(o.n); }} style={{ display: "block", background: o.n === level ? mix(C.accent, 12) : "transparent" }}>
+                <div className="flex items-center justify-between gap-3 px-4 py-3">
+                  <div>
+                    <div style={{ fontFamily: sans, fontWeight: 800, fontSize: 13, color: o.n === level ? C.accent : C.onSurface }}>Level {o.n}</div>
+                    <div style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>{o.range}</div>
+                  </div>
+                  <L2Chip color={o.chip === "ACTIVE" ? C.resolve : C.faint}>{o.chip}</L2Chip>
+                </div>
+              </Touchable>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+
 export default function LifeRPG() {
   const [code, setCode] = useState(() =>
     typeof window !== "undefined" ? localStorage.getItem(CODE_STORAGE_KEY) : null
@@ -6761,6 +7715,19 @@ export default function LifeRPG() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [codeCopied, setCodeCopied] = useState(false);
   const [readOnly, setReadOnly] = useState(false);
+  // Which level is on screen. Level 1 lives in the "main" doc and is never
+  // modified by Level 2; Level 2 has its own doc. Level 1 becomes view-only
+  // automatically once it has ended (after 31 Oct 2026).
+  const [level, setLevel] = useState(() => {
+    try {
+      const v = typeof window !== "undefined" ? localStorage.getItem(LEVEL_STORAGE_KEY) : null;
+      if (v === "1" || v === "2") return Number(v);
+    } catch {}
+    return l2DayIndex(new Date()) >= 1 ? 2 : 1;
+  });
+  const [l1Total, setL1Total] = useState(null);
+  const l1Archived = level === 1 && dayIndex(new Date()) > TOTAL_DAYS;
+  const viewOnly = readOnly || l1Archived;
 
   // authConfig: undefined = still checking, null = no profile exists yet,
   // object { writeCodeHash, readers: [{id,name,codeHash}] } = the one and
@@ -6886,26 +7853,41 @@ export default function LifeRPG() {
       setSyncStatus("synced");
       return;
     }
-    const ref = doc(db, QUESTS_COLLECTION, MAIN_DOC_ID);
+    let cancelled = false;
+    const ref = doc(db, QUESTS_COLLECTION, level === 2 ? L2_DOC_ID : MAIN_DOC_ID);
     const unsub = onSnapshot(
       ref,
       async (snap) => {
+        if (cancelled) return;
         if (snap.exists()) {
-          if (!dirtyRef.current) setState(migrateState(snap.data()));
+          if (!dirtyRef.current) setState(level === 2 ? migrateStateL2(snap.data()) : migrateState(snap.data()));
         } else if (!readOnly) {
-          const initial = defaultState();
+          let initial;
+          if (level === 2) {
+            // First time Level 2 opens: copy (never move) your workout library,
+            // diet plans and future planner tasks from Level 1.
+            let seed = null;
+            try {
+              const s1 = await getDoc(doc(db, QUESTS_COLLECTION, MAIN_DOC_ID));
+              if (s1.exists()) seed = migrateState(s1.data());
+            } catch {}
+            initial = defaultStateL2(seed);
+          } else {
+            initial = defaultState();
+          }
+          if (cancelled) return;
           try { await setDoc(ref, initial); } catch {}
           setState(initial);
         } else {
-          setState(defaultState());
+          setState(level === 2 ? defaultStateL2(null) : defaultState());
         }
         setLoaded(true);
         setSyncStatus("synced");
       },
-      () => { setSyncStatus("error"); setLoaded(true); }
+      () => { if (!cancelled) { setSyncStatus("error"); setLoaded(true); } }
     );
-    return () => unsub();
-  }, [authenticated, readOnly]);
+    return () => { cancelled = true; unsub(); };
+  }, [authenticated, readOnly, level]);
 
   const submitEnter = useCallback((value) => {
     setAuthError(null);
@@ -7053,7 +8035,7 @@ export default function LifeRPG() {
   }, [authConfig]);
 
   const update = useCallback((mutator) => {
-    if (readOnly) return; // safety net — read-only sessions never write
+    if (viewOnly) return; // safety net — read-only / archived sessions never write
     setState((prev) => {
       const next = JSON.parse(JSON.stringify(prev));
       mutator(next);
@@ -7061,10 +8043,10 @@ export default function LifeRPG() {
     });
     setDirty(true);
     setSyncStatus("unsaved");
-  }, [readOnly]);
+  }, [viewOnly]);
 
   const saveNow = useCallback(() => {
-    if (readOnly || !state) return;
+    if (viewOnly || !state) return;
     setSyncStatus("saving");
     if (!SYNC_ENABLED) {
       try {
@@ -7076,17 +8058,50 @@ export default function LifeRPG() {
       }
       return;
     }
-    const ref = doc(db, QUESTS_COLLECTION, MAIN_DOC_ID);
+    const ref = doc(db, QUESTS_COLLECTION, level === 2 ? L2_DOC_ID : MAIN_DOC_ID);
     setDoc(ref, state)
       .then(() => {
         setDirty(false);
         setSyncStatus("synced");
       })
       .catch(() => setSyncStatus("error"));
-  }, [readOnly, state]);
+  }, [viewOnly, state, level]);
+
+  const switchLevel = useCallback(async (n) => {
+    if (n === level) return;
+    // Never lose edits: flush anything unsaved to the level we're leaving.
+    if (dirtyRef.current && !viewOnly && state) {
+      try { await setDoc(doc(db, QUESTS_COLLECTION, level === 2 ? L2_DOC_ID : MAIN_DOC_ID), state); } catch {}
+    }
+    dirtyRef.current = false;
+    setDirty(false);
+    setMenuOpen(false);
+    setCareOpen(null);
+    setTab("dashboard");
+    try { localStorage.setItem(LEVEL_STORAGE_KEY, String(n)); } catch {}
+    setLoaded(false);
+    setState(null);
+    setLevel(n);
+  }, [level, viewOnly, state]);
+
+  useEffect(() => {
+    if (level !== 2 || !authenticated) return;
+    let off = false;
+    getDoc(doc(db, QUESTS_COLLECTION, MAIN_DOC_ID)).then((snap) => {
+      if (off || !snap.exists()) return;
+      try {
+        const s1 = migrateState(snap.data());
+        const t = new Date();
+        const ev = effectiveVitality(s1.vitality, t);
+        const er = effectiveResolve(s1.resolve, s1.vitality, t);
+        setL1Total(wisdomScore(s1.wisdom) + vitalityScore(ev) + wealthScore(s1.wealth) + resolveScore(er));
+      } catch {}
+    }).catch(() => {});
+    return () => { off = true; };
+  }, [level, authenticated]);
 
   const doReset = useCallback(() => {
-    if (readOnly) return;
+    if (viewOnly) return;
     if (!resetArm) {
       setResetArm(true);
       setTimeout(() => setResetArm(false), 4000);
@@ -7097,7 +8112,7 @@ export default function LifeRPG() {
     setResetCodeInput("");
     setResetCodeError(null);
     setResetPanelOpen(true);
-  }, [readOnly, resetArm]);
+  }, [viewOnly, resetArm]);
 
   const confirmReset = useCallback(async () => {
     setResetBusy(true);
@@ -7125,8 +8140,8 @@ export default function LifeRPG() {
       setResetBusy(false);
       return;
     }
-    const initial = defaultState();
-    const ref = doc(db, QUESTS_COLLECTION, MAIN_DOC_ID);
+    const initial = level === 2 ? defaultStateL2(null) : defaultState();
+    const ref = doc(db, QUESTS_COLLECTION, level === 2 ? L2_DOC_ID : MAIN_DOC_ID);
     try {
       await setDoc(ref, initial);
     } catch {
@@ -7138,7 +8153,7 @@ export default function LifeRPG() {
     setResetBusy(false);
     setResetPanelOpen(false);
     setResetCodeInput("");
-  }, [resetCodeInput, authConfig]);
+  }, [resetCodeInput, authConfig, level]);
 
   const changeCode = useCallback(() => {
     if (typeof window !== "undefined") localStorage.removeItem(CODE_STORAGE_KEY);
@@ -7179,7 +8194,7 @@ export default function LifeRPG() {
     );
   }
 
-  if (!loaded || !state) {
+  if (!loaded || !state || (state.level === 2) !== (level === 2)) {
     return (
       <div className={`theme-${mode}`}>
         <style>{THEME_CSS}</style>
@@ -7193,20 +8208,25 @@ export default function LifeRPG() {
   }
 
   const today = new Date();
-  const effVitality = effectiveVitality(state.vitality, today);
-  const effResolve = effectiveResolve(state.resolve, state.vitality, today);
-  const wScore = wisdomScore(state.wisdom);
-  const vScore = vitalityScore(effVitality);
-  const weScore = wealthScore(state.wealth);
-  const rScore = resolveScore(effResolve);
-  const overall = (wScore + vScore + weScore + rScore) / 4;
+  const isL2 = level === 2;
+  let L2cx = null;
+  let effVitality, effResolve, wScore, vScore, weScore, rScore, overall, achieveState, idx, currentWeek, questLocked, careToday, rawDayIdx, inQuestRange, rlogToday, eveningNow, resolveDailyPending, carePending, mtPendingToday, gymSchedToday, gymPlannedToday, gymLogToday, gymPendingToday, navBadges, appRank, rankTint, currentRankBandIdx, prevRankBandIdx, prevRankTint, starPalette, tabs, activeColor;
+  if (!isL2) {
+  effVitality = effectiveVitality(state.vitality, today);
+  effResolve = effectiveResolve(state.resolve, state.vitality, today);
+  wScore = wisdomScore(state.wisdom);
+  vScore = vitalityScore(effVitality);
+  weScore = wealthScore(state.wealth);
+  rScore = resolveScore(effResolve);
+  overall = (wScore + vScore + weScore + rScore) / 4;
   // Leave-adjusted state for achievement checks, so unlocks match what
   // the score screens actually show (see achievementState()).
-  const achieveState = achievementState(state, effVitality, effResolve);
-  const idx = clamp(dayIndex(today), 1, TOTAL_DAYS);
-  const currentWeek = clamp(Math.ceil(idx / 7), 1, 13);
-  const questLocked = false;
+  achieveState = achievementState(state, effVitality, effResolve);
+  idx = clamp(dayIndex(today), 1, TOTAL_DAYS);
+  currentWeek = clamp(Math.ceil(idx / 7), 1, 13);
+  questLocked = false;
 
+  }
   const todayKey = fmtDate(today);
   const todayDietLog = state.diet?.logs?.[todayKey];
   const todayDietPlan = todayDietLog?.planId ? state.diet.plans.find((p) => p.id === todayDietLog.planId) : null;
@@ -7220,25 +8240,26 @@ export default function LifeRPG() {
   const todayPlannerTasks = state.planner?.days?.[todayKey] || [];
   const todayPlannerRemaining = todayPlannerTasks.filter((t) => !t.completed).length;
 
+  if (!isL2) {
   // Pending-today dots on the bottom nav (red dot = something left for today).
   // Only daily things count — weekly/monthly missions (laundry, arm/ab, wealth,
   // wisdom books) don't, since they aren't due on any particular day.
   // Evening items (brush teeth, night skincare, night hair step) only count from 6 PM,
   // so Resolve isn't lit all day.
-  const careToday = careStatus(state.care, todayKey);
-  const rawDayIdx = dayIndex(today);
-  const inQuestRange = rawDayIdx >= 1 && rawDayIdx <= TOTAL_DAYS;
-  const rlogToday = state.resolve.dailyLogs[todayKey] || {};
-  const eveningNow = new Date().getHours() >= 18;
-  const resolveDailyPending = inQuestRange && (!rlogToday.wake || !rlogToday.plan || !rlogToday.hair || (eveningNow && !rlogToday.teeth));
-  const carePending = !careToday.hairDayDone || !careToday.amDone || (eveningNow && (!careToday.hairNightDone || !careToday.pmDone));
-  const mtPendingToday = inQuestRange && today.getDay() !== 0 && today.getDay() !== 6 && MT_DATES.includes(todayKey) && !state.vitality.muayThai?.[todayKey];
-  const gymSchedToday = state.vitality.gym?.schedules?.find((sc) => sc.active);
-  const gymPlannedToday = gymSchedToday ? gymSchedToday.days?.[gymTodayKey()] : null;
-  const gymLogToday = state.vitality.gym?.logs?.[todayKey];
-  const gymPendingToday = !!gymPlannedToday && !gymPlannedToday.muscles?.includes("Rest")
+  careToday = careStatus(state.care, todayKey);
+  rawDayIdx = dayIndex(today);
+  inQuestRange = rawDayIdx >= 1 && rawDayIdx <= TOTAL_DAYS;
+  rlogToday = state.resolve.dailyLogs[todayKey] || {};
+  eveningNow = new Date().getHours() >= 18;
+  resolveDailyPending = inQuestRange && (!rlogToday.wake || !rlogToday.plan || !rlogToday.hair || (eveningNow && !rlogToday.teeth));
+  carePending = !careToday.hairDayDone || !careToday.amDone || (eveningNow && (!careToday.hairNightDone || !careToday.pmDone));
+  mtPendingToday = inQuestRange && today.getDay() !== 0 && today.getDay() !== 6 && MT_DATES.includes(todayKey) && !state.vitality.muayThai?.[todayKey];
+  gymSchedToday = state.vitality.gym?.schedules?.find((sc) => sc.active);
+  gymPlannedToday = gymSchedToday ? gymSchedToday.days?.[gymTodayKey()] : null;
+  gymLogToday = state.vitality.gym?.logs?.[todayKey];
+  gymPendingToday = !!gymPlannedToday && !gymPlannedToday.muscles?.includes("Rest")
     && !(gymLogToday && (gymLogToday.skipped || (gymLogToday.exercises || []).every((e) => e.sets.length > 0 && e.sets.every((x) => x.completed))));
-  const navBadges = readOnly ? {} : {
+  navBadges = viewOnly ? {} : {
     resolve: resolveDailyPending || carePending,
     vitality: mtPendingToday || gymPendingToday,
   };
@@ -7246,16 +8267,16 @@ export default function LifeRPG() {
   // Rank-tinted theme: the same rank color that colors the name card's
   // badge/glow is also pushed down as the app-wide --accent/--glow, so the
   // whole UI's accent shifts as the player's overall rank climbs.
-  const { rank: appRank } = rankInfo(wScore + vScore + weScore + rScore);
-  const rankTint = rankColor(appRank, mode);
-  const currentRankBandIdx = RANK_BANDS.findIndex((b) => b.rank === appRank);
-  const prevRankBandIdx = currentRankBandIdx - 1;
-  const prevRankTint = prevRankBandIdx >= 0 ? rankColor(RANK_BANDS[prevRankBandIdx].rank, mode) : null;
+  ({ rank: appRank } = rankInfo(wScore + vScore + weScore + rScore));
+  rankTint = rankColor(appRank, mode);
+  currentRankBandIdx = RANK_BANDS.findIndex((b) => b.rank === appRank);
+  prevRankBandIdx = currentRankBandIdx - 1;
+  prevRankTint = prevRankBandIdx >= 0 ? rankColor(RANK_BANDS[prevRankBandIdx].rank, mode) : null;
   // Quote-sheet star field draws from every rank reached so far (E through
   // the current rank, inclusive) — the palette visibly grows as you climb.
-  const starPalette = RANK_BANDS.slice(0, currentRankBandIdx + 1).map((b) => rankColor(b.rank, mode));
+  starPalette = RANK_BANDS.slice(0, currentRankBandIdx + 1).map((b) => rankColor(b.rank, mode));
 
-  const tabs = [
+  tabs = [
     { id: "dashboard", label: "Home", icon: Home, color: C.accent },
     { id: "wisdom", label: "Wisdom", icon: BookOpen, color: C.wisdom },
     { id: "vitality", label: "Vitality", icon: Dumbbell, color: C.vitality },
@@ -7266,11 +8287,49 @@ export default function LifeRPG() {
     { id: "planner", label: "Planner", icon: ListTodo, color: C.accent },
     { id: "calendar", label: "Calendar", icon: Calendar, color: C.accent },
   ];
-  const activeColor = tabs.find((t) => t.id === tab)?.color || C.accent;
+  activeColor = tabs.find((t) => t.id === tab)?.color || C.accent;
+  }
+
+  if (isL2) {
+    L2cx = computeL2(state, today);
+    effVitality = null; effResolve = null; achieveState = null; questLocked = false;
+    wScore = L2cx.w; vScore = L2cx.v; weScore = L2cx.we; rScore = L2cx.r;
+    overall = L2cx.displayPct; // shown progress, capped at 120 %
+    idx = clamp(L2cx.idxRaw, 1, L2_DAYS);
+    currentWeek = clamp(Math.ceil(idx / 7), 1, L2_WEEKS);
+    appRank = rankInfoL2(L2cx.total).rank;
+    rankTint = rankColor(appRank, mode);
+    currentRankBandIdx = L2_RANK_BANDS.findIndex((b) => b.rank === appRank);
+    prevRankBandIdx = currentRankBandIdx - 1;
+    prevRankTint = prevRankBandIdx >= 0 ? rankColor(L2_RANK_BANDS[prevRankBandIdx].rank, mode) : null;
+    starPalette = L2_RANK_BANDS.slice(0, currentRankBandIdx + 1).map((b) => rankColor(b.rank, mode));
+    const l2In = L2cx.idxRaw >= 1 && L2cx.idxRaw <= L2_DAYS;
+    const l2Wd = today.getDay();
+    const l2Evening = new Date().getHours() >= 18;
+    const l2HabitPending = l2In && L2_HABITS.some((h) => (h.k === "med" ? l2Evening : true) && !l2HabitStatus(state, todayKey, h.k));
+    const l2VitPending = l2In && ((state.vitality.mtDays.includes(l2Wd) && l2Wd !== 5 && !state.vitality.mt[todayKey])
+      || (state.vitality.wkDays.includes(l2Wd) && !state.vitality.wk[todayKey]));
+    const l2DsaPending = l2In && (Number(state.wisdom.dsa?.[todayKey]) || 0) < dsaTarget(todayKey);
+    navBadges = viewOnly ? {} : {
+      wisdom: l2DsaPending,
+      vitality: l2VitPending,
+      resolve: l2HabitPending,
+      penalties: L2cx.pending.length > 0,
+    };
+    tabs = [
+      { id: "dashboard", label: "Home", icon: Home, color: C.accent },
+      { id: "wisdom", label: "Wisdom", icon: BookOpen, color: C.wisdom },
+      { id: "vitality", label: "Vitality", icon: Dumbbell, color: C.vitality },
+      { id: "wealth", label: "Wealth", icon: Coins, color: C.wealth },
+      { id: "resolve", label: "Resolve", icon: ShieldCheck, color: C.resolve },
+      { id: "penalties", label: "Penalties", icon: Swords, color: C.danger },
+    ];
+    activeColor = tabs.find((t) => t.id === tab)?.color || C.accent;
+  }
 
   return (
     <ThemeModeContext.Provider value={mode}>
-    <ReadOnlyContext.Provider value={readOnly}>
+    <ReadOnlyContext.Provider value={viewOnly}>
     <div
       className={`theme-${mode}`}
       style={{ "--accent": rankTint, "--glow": `color-mix(in srgb, ${rankTint} 32%, transparent)` }}
@@ -7327,7 +8386,16 @@ export default function LifeRPG() {
           readOnly={readOnly}
           onQuoteClick={() => setQuoteOpen(true)}
           showQuoteButton={tab === "dashboard"}
+          level={level}
+          onSwitchLevel={switchLevel}
+          l1Archived={l1Archived}
         />
+
+        {l1Archived && (
+          <div style={{ margin: "0 12px 4px", padding: "6px 12px", borderRadius: 10, background: mix(C.accent, 10), border: `1px solid ${mix(C.accent, 28)}`, fontFamily: mono, fontSize: 10.5, color: C.onSurfaceVariant, flexShrink: 0 }}>
+            Level 1 is archived — view only. Switch to Level 2 from the pill above.
+          </div>
+        )}
 
         {/* overflow menu */}
         {menuOpen && (
@@ -7375,12 +8443,12 @@ export default function LifeRPG() {
                   </div>
                 </Touchable>
               )}
-              {!readOnly && (
+              {!viewOnly && (
                 <Touchable onClick={doReset} rippleColor={`${mix(C.danger, 20)}`} style={{ display: "block" }}>
                   <div className="flex items-center gap-3 px-4 py-3.5">
                     <RotateCcw size={16} color={resetArm ? C.danger : C.onSurfaceVariant} />
                     <span style={{ fontFamily: sans, fontSize: 13.5, color: resetArm ? C.danger : C.onSurface }}>
-                      {resetArm ? "Tap again to confirm" : "Reset all data"}
+                      {resetArm ? "Tap again to confirm" : (isL2 ? "Reset Level 2 data" : "Reset Level 1 data")}
                     </span>
                   </div>
                 </Touchable>
@@ -7699,6 +8767,8 @@ export default function LifeRPG() {
             onNameChange={(v) => update((d) => { d.profile.name = v; })}
             overall={overall}
             totalXP={wScore + vScore + weScore + rScore}
+            rankFn={isL2 ? rankInfoL2 : rankInfo}
+            bands={isL2 ? L2_RANK_BANDS : RANK_BANDS}
             today={today}
             mode={mode}
             status={state.profile?.status || ""}
@@ -7734,16 +8804,16 @@ export default function LifeRPG() {
                 label="Planner"
                 metric={`${todayPlannerRemaining}`}
                 sub="tasks"
-                onClick={() => { if (!readOnly) setTab("planner"); }}
-                locked={readOnly}
+                onClick={() => { if (!viewOnly) setTab("planner"); }}
+                locked={viewOnly}
               />
             </div>
           </div>
         )}
 
-        <QuestStrip today={today} compact={tab !== "dashboard"} />
+        {isL2 ? <QuestStripL2 cx={L2cx} compact={tab !== "dashboard"} /> : <QuestStrip today={today} compact={tab !== "dashboard"} />}
         <div className="px-4 pb-1 flex items-center justify-between" style={{ flexShrink: 0 }}>
-          <span style={{ fontFamily: mono, color: C.faint, fontSize: 11 }}>Day {idx} / 91</span>
+          <span style={{ fontFamily: mono, color: C.faint, fontSize: 11 }}>{isL2 ? L2cx.dayLabel : `Day ${idx} / 91`}</span>
           <span style={{ fontFamily: mono, color: C.faint, fontSize: 11 }}>Week {currentWeek}</span>
         </div>
 
@@ -7751,7 +8821,7 @@ export default function LifeRPG() {
             single container is reused across all tabs and would otherwise
             keep whatever scroll position the previous tab was left at. */}
         <div ref={contentScrollRef} className="flex-1 overflow-y-auto" style={{ position: "relative" }}>
-          {tab === "dashboard" && (
+          {!isL2 && tab === "dashboard" && (
             <div className="pb-4">
               <div className="px-4 pt-3">
                 <QuestBar state={state} set={update} today={today} onOpenCare={(w) => { setCareOpen(w); setTab("resolve"); }} />
@@ -7796,21 +8866,22 @@ export default function LifeRPG() {
               </div>
             </div>
           )}
-          {tab === "wisdom" && <WisdomTab s={state.wisdom} set={update} />}
-          {tab === "vitality" && <VitalityTab s={state.vitality} effective={effVitality} set={update} locked={questLocked} onOpenProgress={() => setTab("progress")} />}
+          {!isL2 && tab === "wisdom" && <WisdomTab s={state.wisdom} set={update} />}
+          {!isL2 && tab === "vitality" && <VitalityTab s={state.vitality} effective={effVitality} set={update} locked={questLocked} onOpenProgress={() => setTab("progress")} />}
           {tab === "progress" && <ProgressTab gym={state.vitality.gym} />}
-          {tab === "wealth" && <WealthTab s={state.wealth} set={update} locked={questLocked} />}
-          {tab === "resolve" && <ResolveTab s={state.resolve} effective={effResolve} set={update} locked={questLocked} wealth={state.wealth} care={state.care} careOpen={careOpen} setCareOpen={setCareOpen} />}
-          {tab === "achievements" && <AchievementsTab state={achieveState} overall={overall} />}
+          {!isL2 && tab === "wealth" && <WealthTab s={state.wealth} set={update} locked={questLocked} />}
+          {!isL2 && tab === "resolve" && <ResolveTab s={state.resolve} effective={effResolve} set={update} locked={questLocked} wealth={state.wealth} care={state.care} careOpen={careOpen} setCareOpen={setCareOpen} />}
+          {!isL2 && tab === "achievements" && <AchievementsTab state={achieveState} overall={overall} />}
           {tab === "diet" && <DietTab s={state.diet} set={update} />}
-          {tab === "planner" && (readOnly ? <RestrictedTab label="Planner" /> : <PlannerTab s={state.planner} set={update} />)}
-          {tab === "calendar" && <CalendarTab state={state} set={update} />}
+          {tab === "planner" && (viewOnly ? <RestrictedTab label="Planner" /> : <PlannerTab s={state.planner} set={update} />)}
+          {!isL2 && tab === "calendar" && <CalendarTab state={state} set={update} />}
+          {isL2 && <Level2Tabs tab={tab} cx={L2cx} s={state} set={update} today={today} setTab={setTab} l1Total={l1Total} careOpen={careOpen} setCareOpen={setCareOpen} />}
 
           {/* FAB — Save button (bottom-right slot). The Quote button now
               lives in the top bar, so this slot is Save-only: it fades
               in the instant something changes and fades out once clean. */}
           <div style={{ position: "sticky", bottom: 16, height: 54, pointerEvents: "none" }}>
-            {!readOnly && (
+            {!viewOnly && (
               <Touchable
                 onClick={saveNow}
                 disabled={!dirty || syncStatus === "saving"}
