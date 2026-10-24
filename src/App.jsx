@@ -6788,17 +6788,16 @@ const L2_HABITS = [
 const L2_LADDER = {
   1: "One-day recreational media ban",
   2: "100 push-ups + 100 crunches",
-  3: "Read one extra chapter",
-  4: "Solve one extra DSA question",
-  5: "Standalone 5 km run",
-  6: "100 push-ups + 100 crunches + 100 squats",
-  7: "Standalone 10 km run",
-  8: "100 push-ups + 100 crunches + 100 squats + 10 km run",
+  3: "Read one extra chapter or solve one extra DSA question",
+  4: "Standalone 5 km run",
+  5: "100 push-ups + 100 crunches + 100 squats",
+  6: "Standalone 10 km run",
+  7: "100 push-ups + 100 crunches + 100 squats + 10 km run",
 };
-const L2_PHYSICAL = new Set([2, 5, 6, 7, 8]);
+const L2_PHYSICAL = new Set([2, 4, 5, 6, 7]);
 const L2_MAX_COLOR = "#C026D3"; // level 7 ("MAX") stands apart from the red L6
-const l2LvLabel = (lv) => (lv >= 8 ? "MAX" : `L${lv}`);
-const l2LvTone = (lv) => (lv >= 8 ? L2_MAX_COLOR : lv >= 7 ? C.danger : lv >= 3 ? L2_L3_COLOR : C.resolve);
+const l2LvLabel = (lv) => (lv >= 7 ? "MAX" : `L${lv}`);
+const l2LvTone = (lv) => (lv >= 7 ? L2_MAX_COLOR : lv >= 6 ? C.danger : lv >= 3 ? L2_L3_COLOR : C.resolve);
 const L2_MONTHS = ["November", "December", "January"];
 const L2_L3_COLOR = "#FFB020"; // colour for the "Level 3 option" missed-habit state
 
@@ -6917,7 +6916,7 @@ function l2HabitStatus(s, ds, k) {
 /* Every penalty is derived from the state (missed sessions, short run weeks,
    missed habits, manual entries) so nothing can drift out of sync. Only
    "cleared / paused / shift" are stored. Level rises by one per overdue day
-   (max L8); after the end of the week it arose in, each further day costs
+   (max L7); after the end of the week it arose in, each further day costs
    XP; pausing (illness/injury) freezes both. */
 function deriveL2Penalties(s, today) {
   const todayKey = fmtDate(today);
@@ -6931,15 +6930,15 @@ function deriveL2Penalties(s, today) {
     const deadline = L2_DATES[Math.min(l2WeekOf(since) * 7 - 1, L2_DAYS - 1)];
     const overdue = Math.max(0, daysBetween(since, end) - shift);
     const late = Math.max(0, daysBetween(deadline, end) - shift);
-    const lvl = Math.min(8, level + overdue);
+    const lvl = Math.min(7, level + overdue);
     out.push({
       id, label, baseLevel: level, level: lvl, since, deadline, overdue, late, stat, source,
       deduction: Math.min(L2_OVERDUE_CAP, late * L2_OVERDUE_DEDUCT),
       cleared: !!clearedAt, paused: !!pausedAt && !clearedAt, physical: L2_PHYSICAL.has(lvl),
     });
   };
-  Object.entries(s.vitality.mt || {}).forEach(([ds, st]) => { if (st === "penalty") add(`mt-${ds}`, `Missed Muay Thai · ${fmtShort(ds)}`, 8, ds, "vitality", "Muay Thai"); });
-  Object.entries(s.vitality.wk || {}).forEach(([ds, st]) => { if (st === "penalty") add(`wk-${ds}`, `Missed workout · ${fmtShort(ds)}`, 6, ds, "vitality", "Workout"); });
+  Object.entries(s.vitality.mt || {}).forEach(([ds, st]) => { if (st === "penalty") add(`mt-${ds}`, `Missed Muay Thai · ${fmtShort(ds)}`, 7, ds, "vitality", "Muay Thai"); });
+  Object.entries(s.vitality.wk || {}).forEach(([ds, st]) => { if (st === "penalty") add(`wk-${ds}`, `Missed workout · ${fmtShort(ds)}`, 5, ds, "vitality", "Workout"); });
   Object.entries(s.resolve.habits || {}).forEach(([ds, hs]) => {
     L2_HABITS.forEach((h) => {
       if (hs?.[h.k] === "opt1") add(`h1-${ds}-${h.k}`, `Missed: ${h.label} · ${fmtShort(ds)}`, 1, ds, "resolve", "Resolve habit");
@@ -6949,7 +6948,7 @@ function deriveL2Penalties(s, today) {
   for (let w = 1; w <= L2_WEEKS; w++) {
     const wkEnd = L2_DATES[w * 7 - 1];
     const km = Number(s.vitality.runKm?.[w]) || 0;
-    if (wkEnd < todayKey && km < 10) add(`run-${w}`, `Week ${w}: ran ${r2(km)} km (< 10 km)`, 7, wkEnd, "vitality", "Running");
+    if (wkEnd < todayKey && km < 10) add(`run-${w}`, `Week ${w}: ran ${r2(km)} km (< 10 km)`, 6, wkEnd, "vitality", "Running");
   }
   (pen.manual || []).forEach((m) => add(m.id, m.label, m.level, m.since, m.stat || "vitality", "Manual"));
   return out.sort((a, b) => Number(a.cleared) - Number(b.cleared) || b.level - a.level || (a.since < b.since ? -1 : 1));
@@ -8055,7 +8054,7 @@ function L2VitalityTab({ cx, s, set, today, onOpenProgress }) {
       </Mission>
       <Mission title="Running" points={26} earned={cx.parts.runXP} color={color}>
         <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 8 }}>
-          10 km minimum per week; every complete 5 km = 1 XP. Marathon distances don't count. Under 10 km after the week ends triggers L7.
+          10 km minimum per week; every complete 5 km = 1 XP. Marathon distances don't count. Under 10 km after the week ends triggers L6.
         </p>
         {Array.from({ length: L2_WEEKS }, (_, i) => i + 1).map((w) => {
           const km = weekRun(w);
@@ -8214,7 +8213,7 @@ function L2ResolveTab({ cx, s, set, today, careOpen, setCareOpen }) {
 function L2LadderView({ pendingLevels }) {
   const entries = Object.entries(L2_LADDER).map(([k, t]) => [Number(k), t]);
   const tone = l2LvTone;
-  const tier = (lv) => (lv >= 8 ? "MAX" : lv >= 7 ? "BRUTAL" : lv >= 3 ? "TOUGH" : "MILD");
+  const tier = (lv) => (lv >= 7 ? "MAX" : lv >= 6 ? "BRUTAL" : lv >= 3 ? "TOUGH" : "MILD");
   return (
     <div>
       {entries.map(([lv, txt], i) => {
@@ -8226,7 +8225,7 @@ function L2LadderView({ pendingLevels }) {
         return (
           <div key={lv} className="flex gap-3">
             <div className="flex flex-col items-center" style={{ width: 38, flexShrink: 0 }}>
-              <div style={{ width: 38, height: 38, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: mix(col, 16), border: `1.5px solid ${mix(col, 60)}`, boxShadow: `0 0 ${hit ? 16 : 10}px ${mix(col, hit ? 55 : 22)}`, fontFamily: sans, fontWeight: 900, fontSize: lv >= 8 ? 11 : 13, letterSpacing: lv >= 8 ? 0.5 : 0, color: col }}>
+              <div style={{ width: 38, height: 38, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: mix(col, 16), border: `1.5px solid ${mix(col, 60)}`, boxShadow: `0 0 ${hit ? 16 : 10}px ${mix(col, hit ? 55 : 22)}`, fontFamily: sans, fontWeight: 900, fontSize: lv >= 7 ? 11 : 13, letterSpacing: lv >= 7 ? 0.5 : 0, color: col }}>
                 {l2LvLabel(lv)}
               </div>
               {!last && <div style={{ flex: 1, width: 2, minHeight: 10, margin: "3px 0", borderRadius: 1, background: `linear-gradient(${mix(col, 55)}, ${mix(tone(lv + 1), 55)})` }} />}
@@ -8235,7 +8234,7 @@ function L2LadderView({ pendingLevels }) {
               <div className="flex items-center gap-2" style={{ marginBottom: 7 }}>
                 <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 9.5, letterSpacing: 1, color: col }}>{tier(lv)}</span>
                 <div className="flex gap-0.5" style={{ marginLeft: 2 }}>
-                  {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                  {[1, 2, 3, 4, 5, 6, 7].map((n) => (
                     <div key={n} style={{ width: 9, height: 4, borderRadius: 2, background: n <= lv ? col : C.outlineVariant, opacity: n <= lv ? 1 : 0.8 }} />
                   ))}
                 </div>
@@ -8307,7 +8306,7 @@ function L2PenaltiesTab({ cx, s, set, today }) {
         <div style={{ fontFamily: sans, fontWeight: 700, fontSize: 11.5, color: C.faint, letterSpacing: 0.4, margin: "14px 0 6px" }}>LOG A PENALTY</div>
         <div className="flex gap-2" style={{ marginBottom: 12 }}>
           <div style={{ flex: 1 }}><L2Btn color={C.danger} onClick={() => addManual("Low protein intake", 2)}>Low protein · L2</L2Btn></div>
-          <div style={{ flex: 1 }}><L2Btn color={C.danger} onClick={() => addManual("Diet cheat / violation", 6)}>Diet violation · L6</L2Btn></div>
+          <div style={{ flex: 1 }}><L2Btn color={C.danger} onClick={() => addManual("Diet cheat / violation", 5)}>Diet violation · L5</L2Btn></div>
         </div>
       </div>
       <Mission title="Penalty ladder" rightLabel="L1 – MAX" color={C.danger} defaultOpen>
@@ -8437,17 +8436,18 @@ function AllLevelsOverview({ levels, level, name, onOpen }) {
           {stats.map((x) => (
             <div
               key={x.k}
-              className="flex items-center gap-2.5"
               style={{
-                position: "relative", overflow: "hidden", borderRadius: 14, padding: "10px 12px",
+                position: "relative", overflow: "hidden", borderRadius: 14, padding: "10px 12px 11px",
                 background: "linear-gradient(120deg, var(--container-high), var(--container))",
                 border: `1px solid ${mix(x.color, 28)}`,
               }}
             >
               <div style={{ position: "absolute", inset: 0, background: `linear-gradient(90deg, ${mix(x.color, 16)}, transparent 55%)`, pointerEvents: "none" }} />
-              <div style={{ position: "relative", display: "flex" }}><Hex size={42} color={x.color}><x.Icon size={22} color={x.color} /></Hex></div>
-              <div className="flex-1 min-w-0" style={{ position: "relative", fontFamily: mono, fontSize: 10, color: C.onSurfaceVariant, letterSpacing: 0.5 }}>{x.label.toUpperCase()}</div>
-              <div style={{ position: "relative", fontFamily: sans, fontWeight: 900, fontSize: 22, color: x.color, lineHeight: 1 }}>{ovNum(x.total)}</div>
+              <div style={{ position: "relative", fontFamily: mono, fontSize: 10, color: C.onSurfaceVariant, letterSpacing: 0.6, marginBottom: 7 }}>{x.label.toUpperCase()}</div>
+              <div className="flex items-center justify-between" style={{ position: "relative" }}>
+                <Hex size={42} color={x.color}><x.Icon size={22} color={x.color} /></Hex>
+                <div style={{ fontFamily: sans, fontWeight: 900, fontSize: 24, color: x.color, lineHeight: 1 }}>{ovNum(x.total)}</div>
+              </div>
             </div>
           ))}
         </div>
@@ -8478,10 +8478,7 @@ function AllLevelsOverview({ levels, level, name, onOpen }) {
                     </span>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-                      <span style={{ fontFamily: sans, fontWeight: 900, fontSize: 16, color: C.onSurface, letterSpacing: 0.3 }}>{LEVEL_NAMES[n].toUpperCase()}</span>
-                      <L2Chip color={st === "ACTIVE" ? C.resolve : C.faint}>{st}</L2Chip>
-                    </div>
+                    <div style={{ fontFamily: sans, fontWeight: 900, fontSize: 16, color: C.onSurface, letterSpacing: 0.3 }}>{LEVEL_NAMES[n].toUpperCase()}</div>
                     <div className="flex items-center gap-1.5" style={{ marginTop: 5 }}>
                       <Calendar size={11} color={C.onSurfaceVariant} />
                       <span style={{ fontFamily: mono, fontSize: 10.5, color: C.onSurfaceVariant }}>{range}</span>
