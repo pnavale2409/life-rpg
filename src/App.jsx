@@ -6789,12 +6789,16 @@ const L2_LADDER = {
   1: "One-day recreational media ban",
   2: "100 push-ups + 100 crunches",
   3: "Read one extra chapter",
-  4: "Standalone 5 km run",
-  5: "100 push-ups + 100 crunches + 100 squats",
-  6: "Standalone 10 km run",
-  7: "100 push-ups + 100 crunches + 100 squats + 10 km run",
+  4: "Solve one extra DSA question",
+  5: "Standalone 5 km run",
+  6: "100 push-ups + 100 crunches + 100 squats",
+  7: "Standalone 10 km run",
+  8: "100 push-ups + 100 crunches + 100 squats + 10 km run",
 };
-const L2_PHYSICAL = new Set([2, 4, 5, 6, 7]);
+const L2_PHYSICAL = new Set([2, 5, 6, 7, 8]);
+const L2_MAX_COLOR = "#C026D3"; // level 7 ("MAX") stands apart from the red L6
+const l2LvLabel = (lv) => (lv >= 8 ? "MAX" : `L${lv}`);
+const l2LvTone = (lv) => (lv >= 8 ? L2_MAX_COLOR : lv >= 7 ? C.danger : lv >= 3 ? L2_L3_COLOR : C.resolve);
 const L2_MONTHS = ["November", "December", "January"];
 const L2_L3_COLOR = "#FFB020"; // colour for the "Level 3 option" missed-habit state
 
@@ -6913,7 +6917,7 @@ function l2HabitStatus(s, ds, k) {
 /* Every penalty is derived from the state (missed sessions, short run weeks,
    missed habits, manual entries) so nothing can drift out of sync. Only
    "cleared / paused / shift" are stored. Level rises by one per overdue day
-   (max L7); after the end of the week it arose in, each further day costs
+   (max L8); after the end of the week it arose in, each further day costs
    XP; pausing (illness/injury) freezes both. */
 function deriveL2Penalties(s, today) {
   const todayKey = fmtDate(today);
@@ -6927,15 +6931,15 @@ function deriveL2Penalties(s, today) {
     const deadline = L2_DATES[Math.min(l2WeekOf(since) * 7 - 1, L2_DAYS - 1)];
     const overdue = Math.max(0, daysBetween(since, end) - shift);
     const late = Math.max(0, daysBetween(deadline, end) - shift);
-    const lvl = Math.min(7, level + overdue);
+    const lvl = Math.min(8, level + overdue);
     out.push({
       id, label, baseLevel: level, level: lvl, since, deadline, overdue, late, stat, source,
       deduction: Math.min(L2_OVERDUE_CAP, late * L2_OVERDUE_DEDUCT),
       cleared: !!clearedAt, paused: !!pausedAt && !clearedAt, physical: L2_PHYSICAL.has(lvl),
     });
   };
-  Object.entries(s.vitality.mt || {}).forEach(([ds, st]) => { if (st === "penalty") add(`mt-${ds}`, `Missed Muay Thai · ${fmtShort(ds)}`, 7, ds, "vitality", "Muay Thai"); });
-  Object.entries(s.vitality.wk || {}).forEach(([ds, st]) => { if (st === "penalty") add(`wk-${ds}`, `Missed workout · ${fmtShort(ds)}`, 5, ds, "vitality", "Workout"); });
+  Object.entries(s.vitality.mt || {}).forEach(([ds, st]) => { if (st === "penalty") add(`mt-${ds}`, `Missed Muay Thai · ${fmtShort(ds)}`, 8, ds, "vitality", "Muay Thai"); });
+  Object.entries(s.vitality.wk || {}).forEach(([ds, st]) => { if (st === "penalty") add(`wk-${ds}`, `Missed workout · ${fmtShort(ds)}`, 6, ds, "vitality", "Workout"); });
   Object.entries(s.resolve.habits || {}).forEach(([ds, hs]) => {
     L2_HABITS.forEach((h) => {
       if (hs?.[h.k] === "opt1") add(`h1-${ds}-${h.k}`, `Missed: ${h.label} · ${fmtShort(ds)}`, 1, ds, "resolve", "Resolve habit");
@@ -6945,7 +6949,7 @@ function deriveL2Penalties(s, today) {
   for (let w = 1; w <= L2_WEEKS; w++) {
     const wkEnd = L2_DATES[w * 7 - 1];
     const km = Number(s.vitality.runKm?.[w]) || 0;
-    if (wkEnd < todayKey && km < 10) add(`run-${w}`, `Week ${w}: ran ${r2(km)} km (< 10 km)`, 6, wkEnd, "vitality", "Running");
+    if (wkEnd < todayKey && km < 10) add(`run-${w}`, `Week ${w}: ran ${r2(km)} km (< 10 km)`, 7, wkEnd, "vitality", "Running");
   }
   (pen.manual || []).forEach((m) => add(m.id, m.label, m.level, m.since, m.stat || "vitality", "Manual"));
   return out.sort((a, b) => Number(a.cleared) - Number(b.cleared) || b.level - a.level || (a.since < b.since ? -1 : 1));
@@ -7934,7 +7938,7 @@ function L2HomeTab({ cx, s, set, today, setTab, setCareOpen }) {
           <div className="flex items-center gap-3 px-4 py-3">
             <Swords size={18} color={C.danger} />
             <span style={{ color: C.onSurface, fontSize: 12.5 }}>
-              <b>{cx.pending.length}</b> pending penalt{cx.pending.length === 1 ? "y" : "ies"} · highest L{worst}
+              <b>{cx.pending.length}</b> pending penalt{cx.pending.length === 1 ? "y" : "ies"} · highest {l2LvLabel(worst)}
             </span>
             <ChevronRight size={16} color={C.faint} style={{ marginLeft: "auto" }} />
           </div>
@@ -7942,7 +7946,7 @@ function L2HomeTab({ cx, s, set, today, setTab, setCareOpen }) {
       )}
 
       {rows.map((r) => (
-        <AttrRow key={r.label} icon={r.icon} label={r.label} score={r.xp} color={r.color} tagline={`${r.tag} · ${r2(r.xp)} XP${r.xp >= 100 ? " · target met" : ""}`} onClick={() => setTab(r.tab)} />
+        <AttrRow key={r.label} icon={r.icon} label={r.label} score={r.xp} color={r.color} tagline={`${r.tag}${r.xp >= 100 ? " · target met" : ""}`} onClick={() => setTab(r.tab)} />
       ))}
       <Touchable
         onClick={() => setTab("calendar")}
@@ -8051,7 +8055,7 @@ function L2VitalityTab({ cx, s, set, today, onOpenProgress }) {
       </Mission>
       <Mission title="Running" points={26} earned={cx.parts.runXP} color={color}>
         <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 8 }}>
-          10 km minimum per week; every complete 5 km = 1 XP. Marathon distances don't count. Under 10 km after the week ends triggers L6.
+          10 km minimum per week; every complete 5 km = 1 XP. Marathon distances don't count. Under 10 km after the week ends triggers L7.
         </p>
         {Array.from({ length: L2_WEEKS }, (_, i) => i + 1).map((w) => {
           const km = weekRun(w);
@@ -8204,6 +8208,63 @@ function L2ResolveTab({ cx, s, set, today, careOpen, setCareOpen }) {
 }
 
 /* ---------- Penalties ---------- */
+/* Visual penalty ladder: a vertical track of level nodes, each with its tasks
+   as chips, a severity tier and a 7-step intensity meter. Levels that currently
+   have a pending penalty are highlighted. */
+function L2LadderView({ pendingLevels }) {
+  const entries = Object.entries(L2_LADDER).map(([k, t]) => [Number(k), t]);
+  const tone = l2LvTone;
+  const tier = (lv) => (lv >= 8 ? "MAX" : lv >= 7 ? "BRUTAL" : lv >= 3 ? "TOUGH" : "MILD");
+  return (
+    <div>
+      {entries.map(([lv, txt], i) => {
+        const col = tone(lv);
+        const last = i === entries.length - 1;
+        const options = txt.split(" or ").map((o) => o.split(" + "));
+        const physical = L2_PHYSICAL.has(lv);
+        const hit = pendingLevels.has(lv);
+        return (
+          <div key={lv} className="flex gap-3">
+            <div className="flex flex-col items-center" style={{ width: 38, flexShrink: 0 }}>
+              <div style={{ width: 38, height: 38, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: mix(col, 16), border: `1.5px solid ${mix(col, 60)}`, boxShadow: `0 0 ${hit ? 16 : 10}px ${mix(col, hit ? 55 : 22)}`, fontFamily: sans, fontWeight: 900, fontSize: lv >= 8 ? 11 : 13, letterSpacing: lv >= 8 ? 0.5 : 0, color: col }}>
+                {l2LvLabel(lv)}
+              </div>
+              {!last && <div style={{ flex: 1, width: 2, minHeight: 10, margin: "3px 0", borderRadius: 1, background: `linear-gradient(${mix(col, 55)}, ${mix(tone(lv + 1), 55)})` }} />}
+            </div>
+            <div style={{ flex: 1, minWidth: 0, marginBottom: last ? 0 : 10, padding: "9px 11px 10px", borderRadius: 12, background: `linear-gradient(120deg, ${mix(col, hit ? 16 : 9)}, var(--container) 70%)`, border: `1px solid ${mix(col, hit ? 55 : 24)}` }}>
+              <div className="flex items-center gap-2" style={{ marginBottom: 7 }}>
+                <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 9.5, letterSpacing: 1, color: col }}>{tier(lv)}</span>
+                <div className="flex gap-0.5" style={{ marginLeft: 2 }}>
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                    <div key={n} style={{ width: 9, height: 4, borderRadius: 2, background: n <= lv ? col : C.outlineVariant, opacity: n <= lv ? 1 : 0.8 }} />
+                  ))}
+                </div>
+                <div className="flex items-center gap-1.5" style={{ marginLeft: "auto" }}>
+                  {physical && <span style={{ fontFamily: mono, fontSize: 8.5, letterSpacing: 0.6, color: C.faint }}>PHYSICAL</span>}
+                  {hit && <L2Chip color={C.danger}>PENDING</L2Chip>}
+                </div>
+              </div>
+              {options.map((parts, oi) => (
+                <React.Fragment key={oi}>
+                  {oi > 0 && <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: 1, color: C.faint, margin: "5px 0 4px" }}>— OR —</div>}
+                  <div className="flex items-center" style={{ flexWrap: "wrap", gap: 5 }}>
+                    {parts.map((p, j) => (
+                      <React.Fragment key={j}>
+                        {j > 0 && <span style={{ fontFamily: mono, fontSize: 11, color: C.faint }}>+</span>}
+                        <span style={{ fontFamily: sans, fontWeight: 600, fontSize: 12, color: C.onSurface, background: mix(col, 13), border: `1px solid ${mix(col, 30)}`, borderRadius: 8, padding: "3px 8px" }}>{p}</span>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function L2PenaltiesTab({ cx, s, set, today }) {
   const todayKey = fmtDate(today);
   const pending = cx.pending;
@@ -8216,7 +8277,7 @@ function L2PenaltiesTab({ cx, s, set, today }) {
           <div style={{ color: C.onSurface, fontSize: 13, fontWeight: 600 }}>{p.label}</div>
           <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginTop: 2 }}>{p.source} · since {fmtDM(p.since)} · deadline {fmtDM(p.deadline)}</div>
         </div>
-        <L2Chip color={p.level >= 6 ? C.danger : L2_L3_COLOR}>L{p.level}</L2Chip>
+        <L2Chip color={l2LvTone(p.level)}>{l2LvLabel(p.level)}</L2Chip>
       </div>
       <div style={{ color: C.onSurfaceVariant, fontSize: 12.5, marginTop: 6 }}>{L2_LADDER[p.level]}</div>
       {!p.cleared && (
@@ -8246,18 +8307,13 @@ function L2PenaltiesTab({ cx, s, set, today }) {
         <div style={{ fontFamily: sans, fontWeight: 700, fontSize: 11.5, color: C.faint, letterSpacing: 0.4, margin: "14px 0 6px" }}>LOG A PENALTY</div>
         <div className="flex gap-2" style={{ marginBottom: 12 }}>
           <div style={{ flex: 1 }}><L2Btn color={C.danger} onClick={() => addManual("Low protein intake", 2)}>Low protein · L2</L2Btn></div>
-          <div style={{ flex: 1 }}><L2Btn color={C.danger} onClick={() => addManual("Diet cheat / violation", 5)}>Diet violation · L5</L2Btn></div>
+          <div style={{ flex: 1 }}><L2Btn color={C.danger} onClick={() => addManual("Diet cheat / violation", 6)}>Diet violation · L6</L2Btn></div>
         </div>
       </div>
-      <Mission title="Penalty ladder" rightLabel="L1 – L7" color={C.danger}>
-        {Object.entries(L2_LADDER).map(([lv, txt]) => (
-          <div key={lv} className="flex gap-2" style={{ marginBottom: 6 }}>
-            <L2Chip color={Number(lv) >= 6 ? C.danger : L2_L3_COLOR}>L{lv}</L2Chip>
-            <span style={{ color: C.onSurfaceVariant, fontSize: 12.5 }}>{txt}</span>
-          </div>
-        ))}
-        <p style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginTop: 8, lineHeight: 1.5 }}>
-          +1 level per overdue day (max L7). After the end of the week it arose in, each extra day costs {L2_OVERDUE_DEDUCT} XP (max {L2_OVERDUE_CAP} per penalty). Illness or injury: pause physical penalties instead of forcing them.
+      <Mission title="Penalty ladder" rightLabel="L1 – MAX" color={C.danger} defaultOpen>
+        <L2LadderView pendingLevels={new Set(pending.map((p) => p.level))} />
+        <p style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginTop: 12, lineHeight: 1.5 }}>
+          +1 level per overdue day (max: MAX). After the end of the week it arose in, each extra day costs {L2_OVERDUE_DEDUCT} XP (max {L2_OVERDUE_CAP} per penalty). Illness or injury: pause physical penalties instead of forcing them.
         </p>
       </Mission>
       {done.length > 0 && (
@@ -8283,7 +8339,7 @@ function Level2Tabs({ tab, cx, s, set, today, setTab, careOpen, setCareOpen }) {
 
 /* ---------- level switcher (replaces the static LEVEL pill) ---------- */
 /* ---------------------------------------------------------------
-   ALL LEVELS — combined Level 1 + Level 2 summary. Opened from the level
+   OVERALL PROGRESS — combined Level 1 + Level 2 summary. Opened from the level
    dropdown. Read-only: career XP (both levels added together), lifetime XP
    per stat with the Level 1 / Level 2 split, and a card per level with its
    own XP and rank. Switching level from here uses the same switcher as the
@@ -8313,103 +8369,155 @@ const OV_STATS = [
 ];
 const ovNum = (n) => String(Math.round((Number(n) || 0) * 10) / 10);
 
-function AllLevelsOverview({ levels, level, onOpen }) {
+function AllLevelsOverview({ levels, level, name, onOpen }) {
   const mode = useContext(ThemeModeContext);
   const l1 = levels[1], l2 = levels[2];
   const have = (x) => !!x && !x.missing;
   const val = (x, k) => (have(x) ? Math.max(0, Number(x[k]) || 0) : 0);
-  const L1C = mix(C.accent, 42);
-  const L2C = C.accent;
-  const total1 = val(l1, "total"), total2 = val(l2, "total");
-  const career = total1 + total2;
-  const life = OV_STATS.map((st) => ({ ...st, a: val(l1, st.k), b: val(l2, st.k) }));
-  const scale = Math.max(1, ...life.map((x) => x.a + x.b));
-  const card = { background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 16, padding: "12px 14px", marginBottom: 10 };
-  const label = { fontFamily: mono, fontSize: 9.5, color: C.faint, letterSpacing: 0.5 };
-  const bar = (parts, max) => (
-    <div style={{ display: "flex", height: 7, borderRadius: 4, overflow: "hidden", background: C.outlineVariant }}>
-      {parts.map(([w, col], i) => <div key={i} style={{ width: `${clamp((w / max) * 100, 0, 100)}%`, background: col, transition: "width 0.3s ease" }} />)}
-    </div>
-  );
+  const stats = OV_STATS.map((st) => ({ ...st, total: val(l1, st.k) + val(l2, st.k) }));
+  const sectionLabel = { fontFamily: sans, fontWeight: 700, fontSize: 11.5, color: C.faint, letterSpacing: 0.4, margin: "16px 2px 8px" };
   const status = (n) => {
     if (n === 1) return dayIndex(new Date()) > TOTAL_DAYS ? "ARCHIVED" : "ACTIVE";
     const i = l2DayIndex(new Date());
     return i < 1 ? "UPCOMING" : i > L2_DAYS ? "COMPLETE" : "ACTIVE";
   };
   const levelInfo = [
-    { n: 1, range: "2 Aug – 31 Oct 2026", x: l1, col: L1C },
-    { n: 2, range: "1 Nov 2026 – 30 Jan 2027", x: l2, col: L2C },
+    { n: 1, range: "2 Aug – 31 Oct 2026", x: l1 },
+    { n: 2, range: "1 Nov 2026 – 30 Jan 2027", x: l2 },
   ];
+  const glow = (c) => (
+    <div style={{ position: "absolute", inset: 0, overflow: "hidden", borderRadius: 14, pointerEvents: "none" }}>
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: `linear-gradient(90deg, transparent, ${c}, transparent)`, opacity: 0.7 }} />
+      <div style={{ position: "absolute", top: -50, right: -40, width: 160, height: 160, borderRadius: "50%", background: `radial-gradient(circle, ${mix(c, 20)}, transparent 72%)` }} />
+    </div>
+  );
+  const flat = { background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 14 };
+  const cardBase = (c) => ({
+    position: "relative",
+    background: "linear-gradient(160deg, var(--container-high) 0%, var(--container) 65%)",
+    border: `1px solid ${mix(c, 25)}`,
+    borderRadius: 14,
+    boxShadow: `inset 0 1px 0 ${mix(c, 13)}, 0 1px 0 ${C.outlineVariant}`,
+  });
 
   return (
     <div className="pb-6 pt-1">
-      <div className="px-4 pt-4 pb-3 flex items-center gap-2">
-        <Diamond size={7} color={C.accent} glow />
-        <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 22, letterSpacing: 0.3 }}>ALL LEVELS</div>
-      </div>
-
-      <div className="mx-4">
-        <div style={card}>
-          <div style={label}>CAREER XP</div>
-          <div style={{ fontFamily: sans, fontWeight: 900, fontSize: 30, color: C.onSurface, lineHeight: 1.1, margin: "2px 0 8px" }}>{ovNum(career)}</div>
-          {bar([[total1, L1C], [total2, L2C]], Math.max(1, career))}
-          <div className="flex items-center gap-4" style={{ marginTop: 8 }}>
-            <div className="flex items-center gap-1.5">
-              <div style={{ width: 8, height: 8, borderRadius: 2, background: L1C }} />
-              <span style={{ fontFamily: mono, fontSize: 10.5, color: C.onSurfaceVariant }}>{LEVEL_NAMES[1]} · {l1 === null ? "…" : have(l1) ? ovNum(total1) : "—"}</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div style={{ width: 8, height: 8, borderRadius: 2, background: L2C }} />
-              <span style={{ fontFamily: mono, fontSize: 10.5, color: C.onSurfaceVariant }}>{LEVEL_NAMES[2]} · {l2 === null ? "…" : have(l2) ? ovNum(total2) : "—"}</span>
-            </div>
-          </div>
-        </div>
-
-        <div style={{ fontFamily: sans, fontWeight: 700, fontSize: 11.5, color: C.faint, letterSpacing: 0.4, margin: "14px 2px 6px" }}>LIFETIME BY STAT</div>
-        <div style={card}>
-          {life.map((x, i) => (
-            <div key={x.k} style={{ marginBottom: i === life.length - 1 ? 0 : 12 }}>
-              <div className="flex items-center justify-between" style={{ marginBottom: 5 }}>
-                <div className="flex items-center gap-2">
-                  <x.Icon size={15} color={x.color} />
-                  <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 13, color: C.onSurface }}>{x.label}</span>
+      <div className="mx-4 pt-4">
+        {/* who + which level is on screen */}
+        {(() => {
+          const sc = rankColor("SS", mode);
+          const cur = levelInfo.find((l) => l.n === level) || levelInfo[0];
+          const st = status(level);
+          const di = level === 1 ? dayIndex(new Date()) : l2DayIndex(new Date());
+          const dn = level === 1 ? TOTAL_DAYS : L2_DAYS;
+          const right = st === "ACTIVE" ? `DAY ${Math.min(Math.max(di, 1), dn)} / ${dn}` : st;
+          return (
+            <div style={{ ...cardBase(sc), padding: "14px 16px" }}>
+              {glow(sc)}
+              <div style={{ position: "relative" }}>
+                <div style={{ fontFamily: sans, fontWeight: 800, fontSize: 12, letterSpacing: 0.8, color: name ? C.onSurfaceVariant : C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {(name || "Your Name").toUpperCase()}
                 </div>
-                <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 14, color: x.color }}>{ovNum(x.a + x.b)}</span>
+                <div style={{ fontFamily: sans, fontWeight: 900, fontSize: 25, letterSpacing: 0.6, color: sc, lineHeight: 1.15, margin: "3px 0 8px", textShadow: `0 0 18px ${mix(sc, 35)}` }}>
+                  {LEVEL_NAMES[level].toUpperCase()}
+                </div>
+                <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+                  <L2Chip color={sc}>LEVEL {level}</L2Chip>
+                  <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>{cur.range}</span>
+                  <span style={{ fontFamily: mono, fontWeight: 700, fontSize: 10, color: st === "ACTIVE" ? C.resolve : C.faint, marginLeft: "auto", letterSpacing: 0.4 }}>{right}</span>
+                </div>
               </div>
-              {bar([[x.a, mix(x.color, 45)], [x.b, x.color]], scale)}
-              <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginTop: 3 }}>L1 {ovNum(x.a)} + L2 {ovNum(x.b)}</div>
+            </div>
+          );
+        })()}
+
+        {/* per-stat totals */}
+        <div style={sectionLabel}>XP BY STAT</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          {stats.map((x) => (
+            <div
+              key={x.k}
+              className="flex items-center gap-2.5"
+              style={{
+                position: "relative", overflow: "hidden", borderRadius: 14, padding: "10px 12px",
+                background: "linear-gradient(120deg, var(--container-high), var(--container))",
+                border: `1px solid ${mix(x.color, 28)}`,
+              }}
+            >
+              <div style={{ position: "absolute", inset: 0, background: `linear-gradient(90deg, ${mix(x.color, 16)}, transparent 55%)`, pointerEvents: "none" }} />
+              <div style={{ position: "relative", display: "flex" }}><Hex size={42} color={x.color}><x.Icon size={22} color={x.color} /></Hex></div>
+              <div className="flex-1 min-w-0" style={{ position: "relative", fontFamily: mono, fontSize: 10, color: C.onSurfaceVariant, letterSpacing: 0.5 }}>{x.label.toUpperCase()}</div>
+              <div style={{ position: "relative", fontFamily: sans, fontWeight: 900, fontSize: 22, color: x.color, lineHeight: 1 }}>{ovNum(x.total)}</div>
             </div>
           ))}
         </div>
 
-        <div style={{ fontFamily: sans, fontWeight: 700, fontSize: 11.5, color: C.faint, letterSpacing: 0.4, margin: "14px 2px 6px" }}>LEVELS</div>
-        {levelInfo.map(({ n, range, x, col }) => {
+        {/* one card per level, tinted by its rank */}
+        <div style={sectionLabel}>LEVELS</div>
+        {levelInfo.map(({ n, range, x }) => {
           const st = status(n);
           const current = n === level;
+          const ok = have(x);
+          const total = val(x, "total");
+          const ri = (n === 1 ? rankInfo : rankInfoL2)(total);
+          const rc = ok ? rankColor(ri.rank, mode) : C.outline;
+          const di = n === 1 ? dayIndex(new Date()) : l2DayIndex(new Date());
+          const dn = n === 1 ? TOTAL_DAYS : L2_DAYS;
+          const duration = st === "ACTIVE" ? `Day ${Math.min(Math.max(di, 1), dn)} of ${dn}` : `${dn} days`;
+          const pctShown = Math.min(120, total / 4);
+          const elite = ri.rank === "S" || ri.rank === "SS";
           return (
-            <Touchable key={n} onClick={() => onOpen(n)} style={{ ...card, display: "block", borderColor: current ? mix(C.accent, 50) : C.outlineVariant, padding: 0 }}>
-              <div className="flex items-center gap-3" style={{ padding: "12px 14px" }}>
-                <div style={{ width: 4, alignSelf: "stretch", borderRadius: 2, background: col }} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span style={{ fontFamily: sans, fontWeight: 800, fontSize: 14, color: C.onSurface }}>{LEVEL_NAMES[n]}</span>
-                    <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>LEVEL {n}</span>
-                    <L2Chip color={st === "ACTIVE" ? C.resolve : C.faint}>{st}</L2Chip>
-                    {have(x) && <L2Chip color={rankColor(x.rank, mode)}>RANK {x.rank}</L2Chip>}
+            <Touchable key={n} onClick={() => onOpen(n)} style={{ ...cardBase(rc), display: "block", marginBottom: 10, borderColor: mix(rc, current ? 55 : 25) }}>
+              {glow(rc)}
+              <div style={{ position: "relative", padding: 16 }}>
+                <div className="flex items-center gap-3">
+                  <div className="flex flex-col items-center" style={{ flexShrink: 0 }}>
+                    <span style={{ fontFamily: mono, fontSize: 9, fontWeight: 700, color: C.faint, letterSpacing: 2 }}>RANK</span>
+                    <span style={{ fontFamily: sans, fontWeight: 900, lineHeight: 1, fontSize: 40, color: ok ? rc : C.faint, letterSpacing: 0.5, textShadow: !ok ? "none" : elite ? `0 0 18px ${mix(rc, 60)}, 0 0 36px ${mix(rc, 33)}` : `0 0 10px ${mix(rc, 27)}` }}>
+                      {ok ? ri.rank : "–"}
+                    </span>
                   </div>
-                  <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginTop: 2 }}>{range}</div>
-                  <div style={{ fontFamily: mono, fontSize: 11.5, color: C.onSurfaceVariant, marginTop: 4 }}>
-                    {x === null ? "Loading…" : have(x) ? `${ovNum(x.total)} / 400 XP` : "No data yet"}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+                      <span style={{ fontFamily: sans, fontWeight: 900, fontSize: 16, color: C.onSurface, letterSpacing: 0.3 }}>{LEVEL_NAMES[n].toUpperCase()}</span>
+                      <L2Chip color={st === "ACTIVE" ? C.resolve : C.faint}>{st}</L2Chip>
+                    </div>
+                    <div className="flex items-center gap-1.5" style={{ marginTop: 5 }}>
+                      <Calendar size={11} color={C.onSurfaceVariant} />
+                      <span style={{ fontFamily: mono, fontSize: 10.5, color: C.onSurfaceVariant }}>{range}</span>
+                    </div>
+                  </div>
+                  <div style={{ flexShrink: 0, width: 64, height: 64 }}>
+                    <Ring value={ok ? pctShown : 0} max={100} color={rc} size={64} stroke={5} glow>
+                      <div className="flex flex-col items-center leading-none">
+                        <span style={{ fontFamily: sans, fontSize: 18, fontWeight: 900, color: C.onSurface }}>{ok ? Math.round(pctShown) : "–"}</span>
+                        <span style={{ fontFamily: mono, fontSize: 7.5, color: C.faint, letterSpacing: 0.5 }}>/ 100</span>
+                      </div>
+                    </Ring>
                   </div>
                 </div>
-                <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 12, color: C.accent, whiteSpace: "nowrap" }}>{current ? "Back →" : "Open →"}</span>
               </div>
             </Touchable>
           );
         })}
 
+        {/* levels 3-8: not unlocked yet */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 2 }}>
+          {[3, 4, 5, 6, 7, 8].map((n) => (
+            <div key={n} className="flex items-center gap-2.5" style={{ ...flat, padding: "9px 11px", opacity: 0.55 }}>
+              <div style={{ width: 32, height: 32, borderRadius: 10, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: C.containerHigh, border: `1px solid ${C.outlineVariant}` }}>
+                <Lock size={14} color={C.faint} />
+              </div>
+              <div className="min-w-0">
+                <div style={{ fontFamily: sans, fontWeight: 800, fontSize: 12.5, color: C.onSurfaceVariant }}>LEVEL {n}</div>
+                <div style={{ fontFamily: mono, fontSize: 9, color: C.faint, letterSpacing: 0.4 }}>LOCKED</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
         <p style={{ fontFamily: mono, fontSize: 10, color: C.faint, margin: "6px 2px 0" }}>
-          Career XP adds both levels together. Each level's stat target is 100 XP, so per-stat totals can go past 100. This page is a read-only summary.
+          Eight levels in total. Each level has 100 XP per stat (400 XP total). This page is a read-only summary.
         </p>
       </div>
     </div>
@@ -8429,7 +8537,7 @@ function LevelPill({ level, onSwitch, l1Archived, overview = false, onOverview }
         onClick={() => setOpen((o) => !o)}
         style={{ fontFamily: mono, fontWeight: 700, fontSize: 9.5, letterSpacing: 0.5, color: C.accent, background: mix(C.accent, 16), border: `1px solid ${mix(C.accent, 30)}`, borderRadius: 8, padding: "3px 6px 3px 7px", display: "flex", alignItems: "center", gap: 3 }}
       >
-        {overview ? "ALL LEVELS" : `LEVEL ${level}`}
+        {overview ? "OVERALL" : `LEVEL ${level}`}
         <ChevronDown size={11} />
       </Touchable>
       {open && (
@@ -8439,7 +8547,7 @@ function LevelPill({ level, onSwitch, l1Archived, overview = false, onOverview }
             <Touchable onClick={() => { setOpen(false); onOverview?.(); }} style={{ display: "block", background: overview ? mix(C.accent, 12) : "transparent", borderBottom: `1px solid ${C.outlineVariant}` }}>
               <div className="flex items-center justify-between gap-3 px-4 py-3">
                 <div>
-                  <div style={{ fontFamily: sans, fontWeight: 800, fontSize: 13, color: overview ? C.accent : C.onSurface }}>All levels</div>
+                  <div style={{ fontFamily: sans, fontWeight: 800, fontSize: 13, color: overview ? C.accent : C.onSurface }}>Overall Progress</div>
                   <div style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>Combined progress</div>
                 </div>
                 <Trophy size={14} color={overview ? C.accent : C.faint} />
@@ -8496,7 +8604,7 @@ export default function LifeRPG() {
     } catch {}
     return l2DayIndex(new Date()) >= 1 ? 2 : 1;
   });
-  const [overview, setOverview] = useState(false);       // "All levels" page open
+  const [overview, setOverview] = useState(false);       // "Overall Progress" page open
   const [otherSummary, setOtherSummary] = useState(null);  // summary of the level that is NOT on screen (null = loading)
   const l1Archived = level === 1 && dayIndex(new Date()) > TOTAL_DAYS;
   const viewOnly = readOnly || l1Archived;
@@ -8859,7 +8967,7 @@ export default function LifeRPG() {
   const pickLevel = useCallback((n) => { setOverview(false); switchLevel(n); }, [switchLevel]);
   const openOverview = useCallback(() => { setMenuOpen(false); setOverview(true); }, []);
 
-  // "All levels" page: the level on screen is summarised from live state; the
+  // "Overall Progress" page: the level on screen is summarised from live state; the
   // other level is read once from its own doc when the page opens.
   useEffect(() => {
     if (!overview || !authenticated) return;
@@ -9545,6 +9653,7 @@ export default function LifeRPG() {
                 ? { 1: otherSummary, 2: { w: wScore, v: vScore, we: weScore, r: rScore, total: wScore + vScore + weScore + rScore, rank: appRank } }
                 : { 1: { w: wScore, v: vScore, we: weScore, r: rScore, total: wScore + vScore + weScore + rScore, rank: appRank }, 2: otherSummary }}
               level={level}
+              name={state?.profile?.name || ""}
               onOpen={pickLevel}
             />
           </div>
