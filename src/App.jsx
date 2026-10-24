@@ -2662,7 +2662,7 @@ function ExerciseDatabaseCard({ gym, update }) {
 /* Three at-a-glance tiles sitting above the Vitality mission cards —
    Today (half width), Progress (quarter, opens the Progress screen),
    Treks (quarter). */
-function VitalityOverviewTiles({ s, eff, onOpenProgress }) {
+function VitalityOverviewTiles({ s, eff, onOpenProgress, ringMax = 9, ringLabel = "TREKS" }) {
   const gym = s.gym;
   const activeSchedule = gym.schedules.find((sc) => sc.active) || null;
   const today = fmtDate(new Date());
@@ -2698,12 +2698,12 @@ function VitalityOverviewTiles({ s, eff, onOpenProgress }) {
         <TrendingUp size={18} color={C.accent} style={{ marginTop: 5 }} />
       </Touchable>
       <div className="flex items-center justify-center" style={{ minWidth: 0, containerType: "inline-size" }}>
-        <Ring value={eff.treks} max={9} color={C.vitality} size={76} stroke={5} fillHeight>
+        <Ring value={eff.treks} max={ringMax} color={C.vitality} size={76} stroke={5} fillHeight>
           <div className="flex flex-col items-center" style={{ gap: 1 }}>
             <span style={{ fontFamily: mono, fontSize: "clamp(10px, 19cqw, 13px)", fontWeight: 700, color: C.onSurface, lineHeight: 1 }}>
-              {eff.treks}<span style={{ fontSize: "0.6em", fontWeight: 600, opacity: 0.65 }}>/9</span>
+              {eff.treks}<span style={{ fontSize: "0.6em", fontWeight: 600, opacity: 0.65 }}>/{ringMax}</span>
             </span>
-            <span style={{ fontFamily: sans, fontWeight: 700, fontSize: "clamp(5px, 10cqw, 7px)", color: C.faint, letterSpacing: 0.5 }}>TREKS</span>
+            <span style={{ fontFamily: sans, fontWeight: 700, fontSize: "clamp(5px, 10cqw, 7px)", color: C.faint, letterSpacing: 0.5 }}>{ringLabel}</span>
           </div>
         </Ring>
       </div>
@@ -6869,6 +6869,7 @@ function defaultStateL2(seed) {
       habits: {},                 // { date: { wake|news|skin|hair|med: "done" | "opt1" | "opt2" } }
       weekly: {},                 // { weekNumber: { laundry, iron, plants(0-2) } }
       bedsheets: [false, false, false],
+      bonusTasks: [],             // [{ id, title, description, completed }] — each completed task = +1 Resolve XP
       dailyLogs: {},              // kept only because the shared care toggle mirrors hair care here
     },
     penalties: { cleared: {}, paused: {}, shift: {}, manual: [] },
@@ -6991,7 +6992,8 @@ function computeL2(s, today) {
   const rWeek = Object.values(s.resolve.weekly || {}).reduce(
     (a, x) => a + (x.laundry ? 1 : 0) + (x.iron ? 0.5 : 0) + (clamp(Number(x.plants) || 0, 0, 2)) * 0.25, 0);
   const rMonth = s.resolve.bedsheets.filter(Boolean).length;
-  const r = r2(rHab + rWeek + rMonth - ded.resolve);
+  const bonusXP = (s.resolve.bonusTasks || []).filter((t) => t.completed).length;
+  const r = r2(rHab + rWeek + rMonth + bonusXP - ded.resolve);
 
   const total = w + v + we + r;
   const pct = (Math.max(0, total) / 400) * 100;
@@ -6999,7 +7001,7 @@ function computeL2(s, today) {
   const dayLabel = idxRaw < 1 ? `Starts ${fmtDM(L2_DATES[0])}` : idxRaw > L2_DAYS ? "Level 2 complete" : `Day ${idxRaw} / ${L2_DAYS}`;
   return {
     todayKey, idxRaw, w, v, we, r, total, pct, displayPct: Math.min(120, pct), penalties, pending, ded, dayLabel,
-    parts: { books, dsaTotal, dsaXP, mtXP, wkXP, runXP, evXP },
+    parts: { books, dsaTotal, dsaXP, mtXP, wkXP, runXP, evXP, bonusXP },
   };
 }
 
@@ -7243,17 +7245,664 @@ function QuestStripL2({ cx, compact }) {
   );
 }
 
-function L2HomeTab({ cx, s, set, today, setTab, l1Total }) {
+/* ---------------------------------------------------------------
+   LEVEL 2 CALENDAR — same layout as Level 1 (month grid with status dots,
+   a day-detail panel, and a separate weekly view), rebuilt on the Level 2
+   state: Wisdom (DSA), Vitality (Muay Thai + strength training), Resolve
+   habits, skin & hair care, and diet. 1 Nov 2026 – 30 Jan 2027.
+--------------------------------------------------------------- */
+const L2_CAL_MONTHS = [
+  { label: "November", year: 2026, month: 10 },
+  { label: "December", year: 2026, month: 11 },
+  { label: "January", year: 2027, month: 0 },
+];
+const L2_DATE_SET = new Set(L2_DATES);
+const l2DotLevel = (done, total) => (total <= 0 || done <= 0 ? 0 : done >= total ? 2 : 1);
+
+function l2CalDayStatus(s, ds) {
+  if (!L2_DATE_SET.has(ds)) return null;
+  const dlog = s.diet.logs[ds];
+  const dplan = dlog?.planId ? s.diet.plans.find((p) => p.id === dlog.planId) : null;
+  let dietGrams = 0;
+  if (dplan) dietGrams += dplan.items.filter((i) => dlog.completed?.[i.id]).reduce((a, i) => a + (Number(i.protein) || 0), 0);
+  dietGrams += (dlog?.extras || []).reduce((a, i) => a + (Number(i.protein) || 0), 0);
+
+  const wd = parseDS(ds).getDay();
+  const v = s.vitality;
+  const planned = [];
+  if (v.mtDays.includes(wd) && wd !== 5) planned.push(v.mt[ds]);
+  if (v.wkDays.includes(wd)) planned.push(v.wk[ds]);
+  const vitalityFrac = planned.length ? planned.filter((x) => x === "done" || x === "leave").length / planned.length : null;
+  const wisdomFrac = clamp((Number(s.wisdom.dsa?.[ds]) || 0) / dsaTarget(ds), 0, 1);
+  const resolveFrac = L2_HABITS.filter((h) => l2HabitStatus(s, ds, h.k) === "done").length / L2_HABITS.length;
+  const cc = careCounts(s.care, ds);
+  const careFrac = (cc.am + cc.pm + cc.hDay + cc.hNight) / (CARE_SKIN_TOTAL + CARE_HAIR_TOTAL);
+  return { dietGrams, wisdomFrac, vitalityFrac, resolveFrac, careFrac };
+}
+
+// [done, planned] sessions for a week, Muay Thai and strength training separately.
+function l2WeekSessions(s, w) {
+  const v = s.vitality;
+  const out = { mt: [0, 0], wk: [0, 0] };
+  l2WeekDates(w).forEach((x) => {
+    const wd = parseDS(x).getDay();
+    if (v.mtDays.includes(wd) && wd !== 5) { out.mt[1]++; if (v.mt[x] === "done" || v.mt[x] === "leave") out.mt[0]++; }
+    if (v.wkDays.includes(wd)) { out.wk[1]++; if (v.wk[x] === "done" || v.wk[x] === "leave") out.wk[0]++; }
+  });
+  return out;
+}
+function l2WeekDots(s, w) {
+  const wlog = s.resolve.weekly?.[w] || {};
+  const rDone = (wlog.laundry ? 1 : 0) + (wlog.iron ? 1 : 0) + (clamp(Number(wlog.plants) || 0, 0, 2) >= 2 ? 1 : 0);
+  const ss = l2WeekSessions(s, w);
+  const km = Number(s.vitality.runKm?.[w]) || 0;
+  const vTotal = ss.mt[1] + ss.wk[1] + 1; // sessions + the 10 km run
+  const vDone = ss.mt[0] + ss.wk[0] + (km >= 10 ? 1 : 0);
+  return { resolve: l2DotLevel(rDone, 3), vitality: l2DotLevel(vDone, vTotal) };
+}
+
+function L2CalendarDayDetail({ date, s, set }) {
+  const state = s;
+  const readOnly = useContext(ReadOnlyContext);
+  const [picking, setPicking] = useState(false);
+
+  const wd = parseDS(date).getDay();
+  const idx = L2_DATES.indexOf(date) + 1;
+  const weekNum = l2WeekOf(date);
+  const label = parseDS(date).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  const cc = careCounts(state.care, date);
+
+    const plans = state.diet.plans || [];
+  const dlog = state.diet.logs[date] || { planId: null, completed: {} };
+  const activePlan = plans.find((p) => p.id === dlog.planId) || null;
+  const dietTotalProtein = activePlan
+    ? activePlan.items.reduce((sum, i) => sum + (Number(i.protein) || 0), 0)
+    : 0;
+  const dietExtraProtein = (dlog.extras || []).reduce((sum, i) => sum + (Number(i.protein) || 0), 0);
+  const dietConsumedProtein = (activePlan
+    ? activePlan.items.filter((i) => dlog.completed?.[i.id]).reduce((sum, i) => sum + (Number(i.protein) || 0), 0)
+    : 0) + dietExtraProtein;
+
+  const target = dsaTarget(date);
+  const solved = Number(s.wisdom.dsa?.[date]) || 0;
+  const v = s.vitality;
+  const habitsDone = L2_HABITS.filter((h) => l2HabitStatus(s, date, h.k) === "done").length;
+
+  const chipFor = (st) => (st === "leave" ? <L2Chip color={C.accent}>LEAVE</L2Chip> : st === "penalty" ? <L2Chip color={C.danger}>PENALTY</L2Chip> : st === "deduct" ? <L2Chip color={C.danger}>−1 XP</L2Chip> : null);
+  const vitRows = [
+    { kind: "mt", label: "Muay Thai class attended", planned: v.mtDays.includes(wd) && wd !== 5, map: v.mt },
+    { kind: "wk", label: "Strength training done", planned: v.wkDays.includes(wd), map: v.wk },
+  ].filter((r) => r.planned || r.map[date]);
+  const vitDone = vitRows.filter((r) => r.map[date] === "done" || r.map[date] === "leave").length;
+
+  return (
+    <div>
+      <div className="px-5 pb-2 flex items-baseline gap-2">
+        <span style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 14 }}>{label}</span>
+        <span style={{ fontFamily: mono, color: C.faint, fontSize: 11 }}>Day {clamp(idx, 1, L2_DAYS)} · Week {weekNum}</span>
+      </div>
+
+            <Mission
+        title="Diet"
+        rightLabel={`${Math.round(dietConsumedProtein)} / ${Math.round(dietTotalProtein)}g`}
+        color={C.accent}
+        defaultOpen
+      >
+        {plans.length === 0 ? (
+          <p style={{ color: C.faint, fontSize: 12.5 }}>No diets created yet — add one from the Diet tab.</p>
+        ) : !activePlan || picking ? (
+          <div className="flex flex-col gap-2">
+            <p style={{ color: C.onSurfaceVariant, fontSize: 12 }}>Which diet was this?</p>
+            {plans.map((p) => (
+              <Touchable
+                key={p.id}
+                writeAction
+                onClick={() => {
+                  set((dr) => {
+                    if (!dr.diet.logs[date]) dr.diet.logs[date] = { planId: null, completed: {}, extras: [] };
+                    dr.diet.logs[date].planId = p.id;
+                    dr.diet.logs[date].completed = {};
+                  });
+                  setPicking(false);
+                }}
+                style={{
+                  background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 10,
+                  padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between",
+                }}
+              >
+                <span style={{ color: C.onSurface, fontFamily: sans, fontSize: 13.5, fontWeight: 600 }}>{p.name}</span>
+                <span style={{ color: C.faint, fontFamily: mono, fontSize: 11.5 }}>{p.items.length} items</span>
+              </Touchable>
+            ))}
+            {activePlan && (
+              <Touchable onClick={() => setPicking(false)} style={{ alignSelf: "flex-end", padding: "4px 2px" }}>
+                <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontSize: 12 }}>Cancel</span>
+              </Touchable>
+            )}
+          </div>
+        ) : (
+          <div>
+            <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
+              <span style={{ color: C.onSurface, fontFamily: sans, fontSize: 13.5, fontWeight: 700 }}>{activePlan.name}</span>
+              {!readOnly && (
+                <Touchable onClick={() => setPicking(true)}>
+                  <span style={{ color: C.accent, fontFamily: sans, fontSize: 12, fontWeight: 600 }}>Change</span>
+                </Touchable>
+              )}
+            </div>
+            {activePlan.items.length === 0 ? (
+              <p style={{ color: C.faint, fontSize: 12.5 }}>This diet has no items yet.</p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {activePlan.items.map((item) => {
+                  const checked = !!dlog.completed?.[item.id];
+                  return (
+                    <div
+                      key={item.id}
+                      style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 12, padding: "8px 12px" }}
+                      className="flex items-center gap-2"
+                    >
+                      <Check2
+                        checked={checked}
+                        color={C.accent}
+                        onClick={() => set((dr) => {
+                          if (!dr.diet.logs[date]) dr.diet.logs[date] = { planId: activePlan.id, completed: {}, extras: [] };
+                          dr.diet.logs[date].completed[item.id] = !dr.diet.logs[date].completed[item.id];
+                        })}
+                      />
+                      <span
+                        style={{
+                          flex: 1, color: checked ? C.faint : C.onSurface, fontFamily: sans, fontSize: 13.5,
+                          textDecoration: checked ? "line-through" : "none",
+                        }}
+                      >
+                        {item.name}
+                      </span>
+                      <span style={{ color: C.faint, fontFamily: mono, fontSize: 11.5 }}>{item.protein}g</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        <DietExtras date={date} log={dlog} set={set} />
+      </Mission>
+
+      <Mission title="Wisdom" rightLabel={`${solved} / ${target} DSA`} color={C.wisdom}>
+        <div className="flex items-center justify-between">
+          <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>DSA questions solved <span style={{ fontFamily: mono, color: C.faint }}>· target {target}</span></span>
+          <Counter value={solved} max={30} color={C.wisdom} onChange={(n) => set((d) => { if (n) d.wisdom.dsa[date] = n; else delete d.wisdom.dsa[date]; })} />
+        </div>
+      </Mission>
+
+      <Mission title="Vitality" rightLabel={vitRows.length ? `${vitDone} / ${vitRows.length}` : "rest day"} color={C.vitality}>
+        {vitRows.length === 0 ? (
+          <p style={{ color: C.faint, fontSize: 12.5 }}>No Muay Thai or strength session planned for this day.</p>
+        ) : (
+          <div className="flex flex-col">
+            {vitRows.map((r) => {
+              const st = r.map[date];
+              const on = st === "done" || st === "leave";
+              return (
+                <label key={r.kind} className="flex items-center gap-1">
+                  <Check2
+                    checked={on}
+                    color={C.vitality}
+                    onClick={() => set((dr) => {
+                      const m = r.kind === "mt" ? dr.vitality.mt : dr.vitality.wk;
+                      if (m[date] === "done" || m[date] === "leave") delete m[date]; else m[date] = "done";
+                    })}
+                  />
+                  <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>{r.label}</span>
+                  <span style={{ marginLeft: 6 }}>{chipFor(st)}</span>
+                </label>
+              );
+            })}
+            <p style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginTop: 6 }}>Leaves, penalties and XP deductions are set in the Vitality tab.</p>
+          </div>
+        )}
+      </Mission>
+
+      <Mission title="Resolve" rightLabel={`${habitsDone} / ${L2_HABITS.length}`} color={C.resolve}>
+        <SwipeHint />
+        <L2HabitList key={date} s={s} set={set} ds={date} />
+      </Mission>
+
+            <Mission title="Skin & hair" rightLabel={`${cc.am + cc.pm + cc.hDay + cc.hNight}/${CARE_SKIN_TOTAL + CARE_HAIR_TOTAL}`} color={C.accent}>
+          {[["SKIN · MORNING", "skin", SKIN_AM_STEPS], ["SKIN · NIGHT", "skin", SKIN_PM_STEPS], ["HAIR · DAY", "hair", HAIR_DAY_STEPS], ["HAIR · NIGHT", "hair", HAIR_NIGHT_STEPS]].map(([title, group, steps]) => (
+            <div key={title}>
+              <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, letterSpacing: 0.5, marginTop: 6 }}>{title}</div>
+              {steps.map(([k, lbl]) => (
+                <label key={k} className="flex items-center gap-1">
+                  <Check2 checked={!!state.care?.[group]?.logs?.[date]?.[k]} color={C.accent} onClick={() => set((dr) => applyCareToggle(dr, date, group, k))} />
+                  <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>{lbl}</span>
+                </label>
+              ))}
+            </div>
+          ))}
+        </Mission>
+    </div>
+  );
+}
+
+/* Weekly items don't belong to a single day: chores, the week's running
+   distance and a summary of the week's sessions and DSA. */
+function L2CalendarWeekCard({ w, s, set }) {
+  const wlog = s.resolve.weekly?.[w] || {};
+  const setW = (fn) => set((d) => { if (!d.resolve.weekly[w]) d.resolve.weekly[w] = {}; fn(d.resolve.weekly[w]); });
+  const ss = l2WeekSessions(s, w);
+  const km = Number(s.vitality.runKm?.[w]) || 0;
+  const weekSolved = l2WeekDates(w).reduce((a, x) => a + (Number(s.wisdom.dsa?.[x]) || 0), 0);
+  const plants = clamp(Number(wlog.plants) || 0, 0, 2);
+  const head = (t) => <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, letterSpacing: 0.5, margin: "10px 0 4px" }}>{t}</div>;
+  const line = (lbl, val, good) => (
+    <div className="flex items-center justify-between" style={{ padding: "3px 0" }}>
+      <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>{lbl}</span>
+      <span style={{ fontFamily: mono, fontSize: 12, color: good ? C.accent : C.onSurfaceVariant }}>{val}</span>
+    </div>
+  );
+  return (
+    <div className="px-4 pb-3 pt-1">
+      <p style={{ color: C.onSurfaceVariant, fontSize: 12 }}>
+        Week {w} · {weekLabel(w)}. These apply to the whole week, not one day.
+      </p>
+
+      {head("RESOLVE · CHORES")}
+      <label className="flex items-center gap-1">
+        <Check2 checked={!!wlog.laundry} color={C.resolve} onClick={() => setW((x) => { x.laundry = !x.laundry; })} />
+        <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>Laundry · 1 XP</span>
+      </label>
+      <label className="flex items-center gap-1">
+        <Check2 checked={!!wlog.iron} color={C.resolve} onClick={() => setW((x) => { x.iron = !x.iron; })} />
+        <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>Ironing · 0.5 XP</span>
+      </label>
+      <div className="flex items-center justify-between" style={{ padding: "4px 2px" }}>
+        <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>Water plants <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint }}>· 0.25 XP each</span></span>
+        <Stepper value={plants} min={0} max={2} color={C.resolve} onChange={(n) => setW((x) => { x.plants = n; })} />
+      </div>
+
+      {head("VITALITY")}
+      {line("Muay Thai", `${ss.mt[0]} / ${ss.mt[1]}`, ss.mt[1] > 0 && ss.mt[0] >= ss.mt[1])}
+      {line("Strength training", `${ss.wk[0]} / ${ss.wk[1]}`, ss.wk[1] > 0 && ss.wk[0] >= ss.wk[1])}
+      <div className="flex items-center gap-2" style={{ padding: "3px 0" }}>
+        <span style={{ color: C.onSurfaceVariant, fontSize: 13, flex: 1 }}>Running <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint }}>· 10 km minimum</span></span>
+        <input
+          type="number" inputMode="decimal" min="0" step="0.1"
+          value={s.vitality.runKm?.[w] ?? ""}
+          placeholder="0"
+          onChange={(e) => set((d) => { const n = parseFloat(e.target.value); if (isFinite(n) && n > 0) d.vitality.runKm[w] = n; else delete d.vitality.runKm[w]; })}
+          style={{ ...l2Input, width: 62, textAlign: "right" }}
+        />
+        <span style={{ fontFamily: mono, fontSize: 10.5, color: km >= 10 ? C.accent : C.onSurfaceVariant }}>km · {Math.floor(km / 5)} XP</span>
+      </div>
+
+      {head("WISDOM")}
+      {line("DSA questions", `${weekSolved} / 9`, weekSolved >= 9)}
+    </div>
+  );
+}
+
+function L2CalendarTab({ s, set, today }) {
+  const todayKey = fmtDate(today);
+  const startDay = l2ClampDay(today);
+  const [monthIdx, setMonthIdx] = useState(() => {
+    const sd = parseDS(startDay);
+    const i = L2_CAL_MONTHS.findIndex((m) => sd.getFullYear() === m.year && sd.getMonth() === m.month);
+    return i >= 0 ? i : 0;
+  });
+  const [selected, setSelected] = useState(startDay);
+  const [selectedWeek, setSelectedWeek] = useState(() => l2WeekOf(startDay));
+  const [view, setView] = useState("daily");
+
+  const { label: monthLabel, year, month } = L2_CAL_MONTHS[monthIdx];
+  const startWeekday = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(null);
+  for (let day = 1; day <= daysInMonth; day++) cells.push(new Date(year, month, day));
+  const selInRange = L2_DATE_SET.has(selected);
+  const navBtn = (dir, disabled) => (
+    <Touchable
+      onClick={() => setMonthIdx((m) => clamp(m + dir, 0, L2_CAL_MONTHS.length - 1))}
+      style={{ width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", opacity: disabled ? 0.3 : 1, pointerEvents: disabled ? "none" : "auto" }}
+    >
+      {dir < 0 ? <ChevronLeft size={18} color={C.onSurfaceVariant} /> : <ChevronRight size={18} color={C.onSurfaceVariant} />}
+    </Touchable>
+  );
+
+  return (
+    <div className="pb-4">
+      <div className="px-4 pt-5 pb-4 flex items-center gap-2">
+        <Diamond size={7} color={C.accent} glow />
+        <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 22, letterSpacing: 0.3 }}>CALENDAR</div>
+      </div>
+
+      <div className="mx-4 mb-4 flex items-center" style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 12, padding: 3 }}>
+        {[{ id: "daily", label: "Daily" }, { id: "weekly", label: "Weekly" }].map((vw) => {
+          const active = view === vw.id;
+          return (
+            <Touchable
+              key={vw.id}
+              onClick={() => setView(vw.id)}
+              style={{ flex: 1, textAlign: "center", padding: "8px 0", borderRadius: 9, background: active ? mix(C.accent, 20) : "transparent" }}
+            >
+              <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 13, color: active ? C.accent : C.onSurfaceVariant }}>{vw.label}</span>
+            </Touchable>
+          );
+        })}
+      </div>
+
+      {view === "daily" && (
+        <>
+          <div className="mx-4 mb-3 flex items-center justify-between">
+            {navBtn(-1, monthIdx === 0)}
+            <span style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 15 }}>{monthLabel} {year}</span>
+            {navBtn(1, monthIdx === L2_CAL_MONTHS.length - 1)}
+          </div>
+
+          <div className="mx-4 mb-2 flex items-center justify-center gap-3 flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <span style={{ fontFamily: mono, fontSize: 10, fontWeight: 700, color: C.accent }}>42g</span>
+              <span style={{ fontFamily: sans, fontSize: 10.5, color: C.onSurfaceVariant }}>Protein</span>
+            </div>
+            <LegendDot color={C.wisdom} label="Wisdom" />
+            <LegendDot color={C.vitality} label="Vitality" />
+            <LegendDot color={C.resolve} label="Resolve" />
+            <LegendDot color={C.accent} label="Care" />
+          </div>
+
+          <div className="mx-4" style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 16, padding: 12 }}>
+            <div className="grid grid-cols-7 gap-1 mb-1">
+              {WEEKDAY_LETTERS.map((wl, i) => (
+                <div key={i} style={{ textAlign: "center", fontFamily: mono, fontSize: 9.5, color: C.faint }}>{wl}</div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7 gap-1">
+              {cells.map((d, i) => {
+                if (!d) return <div key={i} />;
+                const ds = fmtDate(d);
+                const status = l2CalDayStatus(s, ds);
+                const inRange = L2_DATE_SET.has(ds);
+                const isToday = todayKey === ds;
+                const isSel = selected === ds;
+                return (
+                  <Touchable
+                    key={i}
+                    onClick={() => { if (inRange) setSelected(ds); }}
+                    style={{
+                      aspectRatio: "1", borderRadius: 10,
+                      background: isSel ? mix(C.accent, 18) : "transparent",
+                      border: isToday ? `1px solid ${C.accent}` : "1px solid transparent",
+                      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
+                      opacity: inRange ? 1 : 0.28, pointerEvents: inRange ? "auto" : "none",
+                    }}
+                  >
+                    <span style={{ fontFamily: mono, fontSize: 11, color: isSel ? C.accent : C.onSurface, fontWeight: isToday ? 800 : 500 }}>{d.getDate()}</span>
+                    <span style={{ fontFamily: mono, fontSize: 8, lineHeight: "9px", fontWeight: 700, color: status?.dietGrams ? C.accent : "transparent" }}>
+                      {status?.dietGrams ? `${Math.round(status.dietGrams)}g` : "0g"}
+                    </span>
+                    <div className="flex items-center gap-[2px]">
+                      <StatusDot frac={status?.wisdomFrac} color={C.wisdom} />
+                      <StatusDot frac={status?.vitalityFrac} color={C.vitality} />
+                      <StatusDot frac={status?.resolveFrac} color={C.resolve} />
+                      <StatusDot frac={status?.careFrac} color={C.accent} />
+                    </div>
+                  </Touchable>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="pt-4">
+            <CalendarDropdown
+              label={selInRange ? `Day details — ${parseDS(selected).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : "Day details"}
+              color={C.accent}
+            >
+              {!selInRange ? (
+                <p style={{ color: C.faint, fontSize: 12.5, padding: "0 16px 12px" }}>Outside Level 2 (1 Nov 2026 – 30 Jan 2027).</p>
+              ) : (
+                <L2CalendarDayDetail date={selected} s={s} set={set} />
+              )}
+            </CalendarDropdown>
+          </div>
+        </>
+      )}
+
+      {view === "weekly" && (
+        <div>
+          <div className="mx-4 mb-2 flex items-center justify-center gap-4">
+            <LegendDot color={C.vitality} label="Vitality" />
+            <LegendDot color={C.resolve} label="Resolve" />
+          </div>
+          <div className="mx-4" style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 16, padding: 12 }}>
+            <div className="grid grid-cols-7 gap-1">
+              {Array.from({ length: L2_WEEKS }, (_, i) => i + 1).map((wn) => {
+                const dots = l2WeekDots(s, wn);
+                const active = selectedWeek === wn;
+                return (
+                  <Touchable
+                    key={wn}
+                    onClick={() => setSelectedWeek(wn)}
+                    style={{
+                      aspectRatio: "1", borderRadius: 10,
+                      background: active ? mix(C.resolve, 18) : "transparent",
+                      border: active ? `1px solid ${C.resolve}` : "1px solid transparent",
+                      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3,
+                    }}
+                  >
+                    <span style={{ fontFamily: mono, fontSize: 11, color: active ? C.resolve : C.onSurface, fontWeight: active ? 800 : 500 }}>W{wn}</span>
+                    <div className="flex items-center gap-[3px]">
+                      <DualDot done={dots.vitality} color={C.vitality} />
+                      <DualDot done={dots.resolve} color={C.resolve} />
+                    </div>
+                  </Touchable>
+                );
+              })}
+              {Array.from({ length: (7 - (L2_WEEKS % 7)) % 7 }, (_, i) => <div key={`pad-${i}`} />)}
+            </div>
+          </div>
+          <div className="pt-3">
+            <CalendarDropdown label={`Week ${selectedWeek} details`} color={C.resolve}>
+              <L2CalendarWeekCard w={selectedWeek} s={s} set={set} />
+            </CalendarDropdown>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   LEVEL 2 HOME QUESTS — the same slideshow + "Today's quests" sheet as
+   Level 1, fed from the Level 2 state. Skin/hair open the care tiles in
+   Resolve; everything else is swipe-right-to-complete. Evening items
+   (meditate + brush teeth) show from 6 PM. Missed-habit choices and
+   leaves/penalties still live in the Resolve / Vitality / Penalties tabs.
+--------------------------------------------------------------- */
+function QuestBarL2({ s, set, today, cx, onOpenCare }) {
+  const state = s;
+  const readOnly = useContext(ReadOnlyContext);
+  const mode = useContext(ThemeModeContext);
+  const [sheet, setSheet] = useState(false);
+  const [slide, setSlide] = useState(0);
+  const [hold, setHold] = useState(false); // finger/pointer down on the slideshow pauses auto-rotate
+
   const ds = cx.todayKey;
   const inRange = cx.idxRaw >= 1 && cx.idxRaw <= L2_DAYS;
+  const wk = l2WeekOf(ds);
+  const wlog = (inRange && s.resolve.weekly?.[wk]) || {};
+  const wd = today.getDay();
   const v = s.vitality;
+  const evening = new Date().getHours() >= 18;
   const target = dsaTarget(ds);
   const solved = Number(s.wisdom.dsa?.[ds]) || 0;
-  const wd = today.getDay();
-  const plannedToday = [
-    { k: "mt", label: "Muay Thai session", on: v.mtDays.includes(wd) && wd !== 5, map: v.mt },
-    { k: "wk", label: "Strength workout", on: v.wkDays.includes(wd), map: v.wk },
-  ].filter((x) => x.on);
+  const plantsDone = clamp(Number(wlog.plants) || 0, 0, 2);
+  const setWeekly = (fn) => set((d) => {
+    if (!d.resolve.weekly[wk]) d.resolve.weekly[wk] = {};
+    fn(d.resolve.weekly[wk]);
+  });
+
+  // Every daily task due right now, done or not. A habit counts as handled
+  // once it has any status (done, or a "missed" option chosen in Resolve).
+  const dailyAll = !inRange ? [] : [
+    { id: "dsa", short: "DSA", title: "DSA questions", sub: `${solved} / ${target} solved today`, color: C.wisdom, done: solved >= target,
+      onComplete: () => set((d) => { d.wisdom.dsa[ds] = Math.max(Number(d.wisdom.dsa[ds]) || 0, target); }) },
+    ...(v.mtDays.includes(wd) && wd !== 5 ? [{ id: "mt", short: "Muay Thai", title: "Muay Thai class", sub: "Today's session", color: C.vitality, done: !!v.mt[ds],
+      onComplete: () => set((d) => { d.vitality.mt[ds] = "done"; }) }] : []),
+    ...(v.wkDays.includes(wd) ? [{ id: "wk", short: "Strength", title: "Strength workout", sub: "Today's session", color: C.vitality, done: !!v.wk[ds],
+      onComplete: () => set((d) => { d.vitality.wk[ds] = "done"; }) }] : []),
+    ...L2_HABITS.filter((h) => h.k !== "med" || evening).map((h) => ({
+      id: `h-${h.k}`, short: h.k, title: h.label, sub: `+${h.xp} XP`, color: C.resolve, done: !!l2HabitStatus(s, ds, h.k),
+      ...(h.k === "skin" || h.k === "hair"
+        ? { open: h.k, color: C.accent }
+        : { onComplete: () => set((d) => { ensureHabit(d, ds)[h.k] = "done"; }) }),
+    })),
+  ];
+  const daily = dailyAll.filter((t) => !t.done);
+
+  const weekly = !inRange ? [] : [
+    ...(!wlog.laundry ? [{ id: "laundry", title: "Laundry", sub: "+1 XP", color: C.resolve, onComplete: () => setWeekly((x) => { x.laundry = true; }) }] : []),
+    ...(!wlog.iron ? [{ id: "iron", title: "Ironing", sub: "+0.5 XP", color: C.resolve, onComplete: () => setWeekly((x) => { x.iron = true; }) }] : []),
+    ...(plantsDone < 2 ? [{ id: "plants", title: "Water plants", sub: `${plantsDone} / 2 this week · +0.25 XP each`, color: C.resolve,
+      onComplete: () => setWeekly((x) => { x.plants = clamp((Number(x.plants) || 0) + 1, 0, 2); }) }] : []),
+  ];
+
+  const bonus = (state.resolve.bonusTasks || []).filter((t) => !t.completed).map((t) => ({
+    id: t.id, title: t.title, color: C.resolve,
+    onComplete: () => set((d) => {
+      const task = d.resolve.bonusTasks.find((x) => x.id === t.id);
+      if (task) task.completed = true;
+    }),
+  }));
+
+  const i = Math.min(slide, Math.max(daily.length - 1, 0));
+  const sel = daily[i];
+
+  // Auto-rotate every 5s. The timer restarts on every slide change (manual or
+  // automatic), and pauses while the pop-up is open or the slideshow is touched.
+  useEffect(() => {
+    if (daily.length < 2 || sheet || hold) return;
+    if (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const t = setTimeout(() => setSlide(i + 1 >= daily.length ? 0 : i + 1), 5000);
+    return () => clearTimeout(t);
+  }, [i, daily.length, sheet, hold]);
+  const cardProps = (t, closeSheet, canNext) => {
+    const nxt = canNext ? "← next" : "";
+    const join = (a, b) => [a, b].filter(Boolean).join(" · ");
+    return t.open
+      ? { title: t.title, sub: t.sub, color: t.color, tag: join(nxt, "open in Resolve"), onTap: () => { closeSheet?.(); onOpenCare(t.open); } }
+      : { title: t.title, sub: t.sub, color: t.color, onComplete: t.onComplete, disabled: readOnly, tag: join(nxt, readOnly ? "" : "done →") };
+  };
+
+  const groups = [
+    { key: "daily", label: "Daily", color: C.resolve, items: daily },
+    { key: "weekly", label: "Weekly", color: C.vitality, items: weekly },
+    { key: "bonus", label: "Bonus", color: C.wealth, items: bonus },
+  ];
+
+  return (
+    <div className="mb-3" style={{ background: `linear-gradient(120deg, var(--container-high), var(--container))`, borderRadius: 14, border: `1px solid ${C.outlineVariant}`, overflow: "hidden" }}>
+      <Touchable onClick={() => setSheet(true)} style={{ display: "block", width: "100%" }}>
+        <div className="flex items-center gap-2" style={{ padding: "9px 12px" }}>
+          {[["Daily", daily.length, C.resolve], ["Weekly", weekly.length, C.vitality], ["Bonus", bonus.length, C.wealth]].map(([label, n, col]) => (
+            <span
+              key={label}
+              style={{
+                fontFamily: mono, fontSize: 10.5, fontWeight: 600, whiteSpace: "nowrap", padding: "2px 8px", borderRadius: 999,
+                border: `1px solid ${mix(col, n > 0 ? 45 : 20)}`, background: n > 0 ? mix(col, 14) : "transparent", color: n > 0 ? col : C.faint,
+              }}
+            >
+              {label} {n}
+            </span>
+          ))}
+          <span style={{ flex: 1 }} />
+          <ChevronUp size={13} color={C.faint} />
+        </div>
+      </Touchable>
+
+      <div
+        onPointerDown={() => setHold(true)}
+        onPointerUp={() => setHold(false)}
+        onPointerCancel={() => setHold(false)}
+        style={{ borderTop: `1px solid ${C.outlineVariant}`, padding: "8px 10px 6px" }}
+      >
+        <style>{"@keyframes qslide{from{opacity:0;transform:translateX(28px)}to{opacity:1;transform:none}}"}</style>
+        {!sel ? (
+          <div style={{ color: C.onSurfaceVariant, fontSize: 12, padding: "2px 2px 4px" }}>All daily tasks done.</div>
+        ) : (
+          <>
+            <div key={sel.id} style={{ animation: "qslide 0.22s ease" }}>
+              <SwipeCard
+                {...cardProps(sel, undefined, daily.length > 1)}
+                onSwipeLeft={daily.length > 1 ? () => setSlide(i + 1 >= daily.length ? 0 : i + 1) : undefined}
+              />
+            </div>
+            {daily.length > 1 && (
+              <div className="flex items-center justify-center" style={{ gap: 8 }}>
+                <span onClick={() => setSlide(i - 1 < 0 ? daily.length - 1 : i - 1)} style={{ padding: "0 8px", fontSize: 18, lineHeight: 1, color: C.onSurfaceVariant, cursor: "pointer", userSelect: "none" }}>‹</span>
+                <div className="flex items-center">
+                  {daily.map((t, n) => (
+                    <div key={t.id} onClick={() => setSlide(n)} style={{ padding: "6px 3px", cursor: "pointer" }}>
+                      <div style={{ width: n === i ? 16 : 6, height: 6, borderRadius: 3, background: n === i ? sel.color : mix(C.faint, 55), transition: "all 0.2s ease" }} />
+                    </div>
+                  ))}
+                </div>
+                <span onClick={() => setSlide(i + 1 >= daily.length ? 0 : i + 1)} style={{ padding: "0 8px", fontSize: 18, lineHeight: 1, color: C.onSurfaceVariant, cursor: "pointer", userSelect: "none" }}>›</span>
+                <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint }}>{i + 1}/{daily.length}</span>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {sheet && createPortal(
+        <div className={`theme-${mode}`} style={{ position: "fixed", inset: 0, zIndex: 1000 }}>
+          <div onClick={() => setSheet(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.5)" }} />
+          <div
+            style={{
+              position: "absolute", left: 0, right: 0, bottom: 0, margin: "0 auto", maxWidth: 560, maxHeight: "78vh",
+              overflowY: "auto", overscrollBehavior: "contain",
+              background: C.containerHighest, border: `1px solid ${C.outlineVariant}`, borderBottom: "none",
+              borderRadius: "18px 18px 0 0", padding: "14px 12px 22px", boxShadow: "0 -12px 28px rgba(0,0,0,0.35)",
+            }}
+          >
+            <div className="flex items-center justify-between" style={{ marginBottom: 6 }}>
+              <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 14, color: C.onSurface }}>Today's quests</span>
+              <Touchable onClick={() => setSheet(false)} style={{ padding: "4px 10px", borderRadius: 8 }}>
+                <span style={{ fontFamily: sans, fontWeight: 600, fontSize: 12, color: C.onSurfaceVariant }}>Close</span>
+              </Touchable>
+            </div>
+            {groups.map((g) => {
+              const noneMsg = g.key === "bonus" && (state.resolve.bonusTasks || []).length === 0 ? "No bonus tasks yet." : "All done.";
+              return (
+                <div key={g.key} style={{ marginTop: 10 }}>
+                  <div className="flex items-center" style={{ padding: "0 2px 6px" }}>
+                    <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 10.5, color: g.color, letterSpacing: 0.5, textTransform: "uppercase" }}>{g.label}</span>
+                    <span style={{ marginLeft: "auto", fontFamily: mono, fontSize: 10.5, color: g.items.length > 0 ? g.color : C.faint }}>
+                      {g.items.length > 0 ? `${g.items.length} left` : "clear"}
+                    </span>
+                  </div>
+                  {g.items.length === 0 ? (
+                    <div style={{ color: C.onSurfaceVariant, fontSize: 12, padding: "2px 2px 4px" }}>{noneMsg}</div>
+                  ) : (
+                    g.items.map((t) => <SwipeCard key={t.id} {...cardProps(t, () => setSheet(false))} />)
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
+
+function L2HomeTab({ cx, s, set, today, setTab, setCareOpen, l1Total }) {
+  const ds = cx.todayKey;
+  const inRange = cx.idxRaw >= 1 && cx.idxRaw <= L2_DAYS;
   const worst = cx.pending.reduce((m, p) => Math.max(m, p.level), 0);
   const rows = [
     { icon: BookOpen, label: "Wisdom", color: C.wisdom, xp: cx.w, tag: "Books & daily DSA", tab: "wisdom" },
@@ -7284,34 +7933,7 @@ function L2HomeTab({ cx, s, set, today, setTab, l1Total }) {
         )}
       </div>
 
-      {inRange && (
-        <div style={{ marginBottom: 10 }}>
-          <div style={{ fontFamily: sans, fontWeight: 700, fontSize: 11.5, color: C.faint, letterSpacing: 0.4, marginBottom: 6 }}>TODAY</div>
-          <div className="flex items-center justify-between" style={{ background: C.containerHigh, border: `1px solid ${solved >= target ? mix(C.wisdom, 40) : C.outlineVariant}`, borderLeft: `3px solid ${solved >= target ? C.wisdom : C.outlineVariant}`, borderRadius: 12, padding: "8px 12px", marginBottom: 6 }}>
-            <div>
-              <div style={{ color: C.onSurface, fontSize: 13 }}>DSA questions</div>
-              <div style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>target {target} today</div>
-            </div>
-            <Counter value={solved} max={30} color={C.wisdom} onChange={(n) => set((d) => { if (n) d.wisdom.dsa[ds] = n; else delete d.wisdom.dsa[ds]; })} />
-          </div>
-          {plannedToday.map((p) => {
-            const st = p.map[ds];
-            return (
-              <div key={p.k} style={{ marginBottom: 6 }}>
-                <SwipeRow done={st === "done"} color={C.vitality} onToggle={() => set((d) => { const m = p.k === "mt" ? d.vitality.mt : d.vitality.wk; if (m[ds] === "done") delete m[ds]; else m[ds] = "done"; })}>
-                  <div style={swipeCardStyle(st === "done", C.vitality, "10px 12px")}>
-                    <div className="flex items-center justify-between">
-                      <span style={{ color: st === "done" ? C.faint : C.onSurface, fontSize: 13, textDecoration: st === "done" ? "line-through" : "none" }}>{p.label}</span>
-                      {st && st !== "done" && <L2Chip color={C.danger}>{st.toUpperCase()}</L2Chip>}
-                    </div>
-                  </div>
-                </SwipeRow>
-              </div>
-            );
-          })}
-          <L2HabitList s={s} set={set} ds={ds} />
-        </div>
-      )}
+      <QuestBarL2 s={s} set={set} today={today} cx={cx} onOpenCare={(w) => { setCareOpen(w); setTab("resolve"); }} />
 
       {cx.pending.length > 0 && (
         <Touchable onClick={() => setTab("penalties")} style={{ background: mix(C.danger, 10), border: `1px solid ${mix(C.danger, 40)}`, borderRadius: 14, display: "block", marginBottom: 10 }}>
@@ -7328,6 +7950,21 @@ function L2HomeTab({ cx, s, set, today, setTab, l1Total }) {
       {rows.map((r) => (
         <AttrRow key={r.label} icon={r.icon} label={r.label} score={r.xp} color={r.color} tagline={`${r.tag} · ${r2(r.xp)} XP${r.xp >= 100 ? " · target met" : ""}`} onClick={() => setTab(r.tab)} />
       ))}
+      <Touchable
+        onClick={() => setTab("calendar")}
+        style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 16, display: "block", marginTop: 4 }}
+      >
+        <div className="flex items-center gap-3 pl-4 pr-5 py-3">
+          <Hex size={30} color={C.accent}>
+            <Calendar size={16} color={C.accent} />
+          </Hex>
+          <div className="flex flex-col">
+            <span style={{ color: C.onSurface, fontFamily: sans, fontWeight: 600, fontSize: 12.5 }}>Calendar</span>
+            <span style={{ color: C.faint, fontFamily: sans, fontSize: 10.5 }}>Daily & weekly progress log</span>
+          </div>
+          <ChevronRight size={18} color={C.faint} style={{ marginLeft: "auto" }} />
+        </div>
+      </Touchable>
     </div>
   );
 }
@@ -7403,12 +8040,7 @@ function L2VitalityTab({ cx, s, set, today, onOpenProgress }) {
   return (
     <div className="pb-4">
       <ScreenHeader title="Vitality" sub="Muay Thai, strength, running and events." color={color} score={cx.v} />
-      <Touchable onClick={onOpenProgress} style={{ background: C.container, border: `1px solid ${mix(C.accent, 50)}`, borderRadius: 12, display: "block", margin: "0 16px 12px" }}>
-        <div className="flex items-center justify-between px-4 py-2.5">
-          <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 11, letterSpacing: 0.5, color: C.accent }}>WORKOUT PROGRESS</span>
-          <ChevronRight size={15} color={C.accent} />
-        </div>
-      </Touchable>
+      <VitalityOverviewTiles s={v} eff={{ treks: Number(v.events) || 0 }} onOpenProgress={onOpenProgress} ringMax={8} ringLabel="EVENTS" />
       <WorkoutCard s={v} set={set} locked={false} />
       <Mission title="Muay Thai" points={v.mtDays.length * L2_WEEKS} earned={cx.parts.mtXP} color={color}>
         <L2AttendanceGrid kind="mt" s={s} set={set} today={today} />
@@ -7572,6 +8204,7 @@ function L2ResolveTab({ cx, s, set, today, careOpen, setCareOpen }) {
           </label>
         ))}
       </Mission>
+      <BonusTasksMission s={s.resolve} set={set} />
     </div>
   );
 }
@@ -7644,12 +8277,13 @@ function L2PenaltiesTab({ cx, s, set, today }) {
 
 /* ---------- router ---------- */
 function Level2Tabs({ tab, cx, s, set, today, setTab, l1Total, careOpen, setCareOpen }) {
-  if (tab === "dashboard") return <L2HomeTab cx={cx} s={s} set={set} today={today} setTab={setTab} l1Total={l1Total} />;
+  if (tab === "dashboard") return <L2HomeTab cx={cx} s={s} set={set} today={today} setTab={setTab} setCareOpen={setCareOpen} l1Total={l1Total} />;
   if (tab === "wisdom") return <L2WisdomTab cx={cx} s={s} set={set} today={today} />;
   if (tab === "vitality") return <L2VitalityTab cx={cx} s={s} set={set} today={today} onOpenProgress={() => setTab("progress")} />;
   if (tab === "wealth") return <L2WealthTab cx={cx} s={s} set={set} />;
   if (tab === "resolve") return <L2ResolveTab cx={cx} s={s} set={set} today={today} careOpen={careOpen} setCareOpen={setCareOpen} />;
   if (tab === "penalties") return <L2PenaltiesTab cx={cx} s={s} set={set} today={today} />;
+  if (tab === "calendar") return <L2CalendarTab s={s} set={set} today={today} />;
   return null;
 }
 
