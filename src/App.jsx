@@ -665,7 +665,9 @@ function resolveScore(s) {
     Math.max(0, s.junkFood - 8) + Math.max(0, s.mtLeaves - 6) + Math.max(0, s.wakeBreaks - 20);
   const bonusPoints = (s.bonusTasks || []).filter((t) => t.completed).length;
   const netDeductions = Math.max(0, deductions - bonusPoints);
-  return clamp(daily + weekly + bedsheets - netDeductions, 0, 100);
+  // Round away floating-point dust: 364 additions of 0.2 land on 99.99999999999987,
+  // which would otherwise read as "not quite 100" and block the max achievements.
+  return clamp(Math.round((daily + weekly + bedsheets - netDeductions) * 1e6) / 1e6, 0, 100);
 }
 
 /* ---------------------------------------------------------------
@@ -804,7 +806,7 @@ const ACHIEVEMENTS = [
   { id: "o1", attr: "overall", label: "Quarter Quest", desc: "Reach 25 overall average.", check: (s, o) => o >= 25 },
   { id: "o2", attr: "overall", label: "Halfway Hero", desc: "Reach 50 overall average.", check: (s, o) => o >= 50 },
   { id: "o3", attr: "overall", label: "Home Stretch", desc: "Reach 75 overall average.", check: (s, o) => o >= 75 },
-  { id: "o4", attr: "overall", label: "Level 1 Complete", desc: "Max all four attributes.", check: (s, o) => o >= 100 },
+  { id: "o4", attr: "overall", label: "Level 1 Complete", desc: "Max all four attributes.", check: (s, o) => o >= 100 - 1e-6 },
 ];
 
 /* ---------------------------------------------------------------
