@@ -8,7 +8,7 @@ import {
 import {
   BookOpen, Dumbbell, Coins, ShieldCheck, ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
   Mountain, Check, Minus, Plus, Save, Trophy, Crown, Lock, RotateCcw, Home, MoreVertical,
-  CheckCircle2, CloudOff, Loader2, KeyRound, Copy, Sun, Moon, Sparkles, Calendar, Trash2,
+  CheckCircle2, CloudOff, Loader2, KeyRound, Copy, Moon, Sparkles, Calendar, Trash2,
   Utensils, ListTodo, ArrowRightToLine, Pencil, Users, UserPlus, History,
   Briefcase, Plane, Tag, EyeOff, Eye,
   Rocket, TrendingUp, Building2, Shuffle, Gem, Globe,
@@ -22,9 +22,8 @@ const LOCAL_STATE_KEY = "life-rpg-local-state";
 /* ---------------------------------------------------------------
    THEME TOKENS
    C is a map of CSS custom-property references. The actual colors
-   live in THEME_CSS below, scoped under .theme-dark / .theme-light
-   classes applied to the outer app shell — so every component below
-   can keep using C.xxx unchanged while the whole app re-themes.
+   live in THEME_CSS below, scoped under the .theme-dark class applied to
+   the outer app shell (the app is dark-only).
 --------------------------------------------------------------- */
 const C = {
   surface: "var(--surface)",
@@ -70,28 +69,6 @@ const THEME_CSS = `
   --shell-shadow: 0 20px 48px rgba(0,0,0,0.55);
   --ripple: rgba(255,255,255,0.22);
 }
-.theme-light {
-  --surface: #EEF3FB;
-  --surface-low: #E3EAF7;
-  --container: #FFFFFF;
-  --container-high: #F3F6FC;
-  --container-highest: #E7EDF9;
-  --outline: #C7D2E8;
-  --outline-variant: #DCE4F3;
-  --on-surface: #16203A;
-  --on-surface-variant: #5B6683;
-  --faint: #93A0BE;
-  --danger: #D6394A;
-  --danger-container: #FBE3E5;
-  --wisdom: #6A46D6;
-  --vitality: #D8541F;
-  --wealth: #B37800;
-  --resolve: #0E8E7D;
-  --accent: #2F6FEF;
-  --glow: rgba(47,111,239,0.22);
-  --shell-shadow: 0 20px 48px rgba(30,50,100,0.18);
-  --ripple: rgba(20,40,90,0.12);
-}
 `;
 
 const sans = "'Roboto', 'Google Sans Text', system-ui, -apple-system, sans-serif";
@@ -102,15 +79,26 @@ const FONT_IMPORT = "@import url('https://fonts.googleapis.com/css2?family=Robot
 const QUEST_START = new Date(2026, 7, 2); // 2 Aug 2026
 const QUEST_END = new Date(2026, 9, 31); // 31 Oct 2026
 const TOTAL_DAYS = 91;
+// Level 1 ended on 31 Oct 2026. It stays editable for its OLD dates (no new
+// dates are ever added) for this many more days, then locks to view-only.
+const L1_GRACE_DAYS = 5; // editable through 5 Nov 2026, locked from 6 Nov
 const MT_START = new Date(2026, 7, 3);
 const MT_END = new Date(2026, 9, 30);
 
 const CODE_STORAGE_KEY = "life-rpg-code";
-const THEME_STORAGE_KEY = "life-rpg-theme";
 const MAIN_DOC_ID = "main";
 const AUTH_DOC_ID = "_auth_";
 const READER_LOG_DOC_ID = "_reader_log_";
 const ReadOnlyContext = createContext(false);
+// True only for genuine read-only (reader) sessions. An archived Level 1 is
+// view-only for Level 1's own quest data, but the data shared by both levels
+// (diet, planner, workout, progress) stays editable, so those screens re-scope
+// ReadOnlyContext to this value through <SharedScope>.
+const ViewerReadOnlyContext = createContext(false);
+function SharedScope({ children }) {
+  const viewerReadOnly = useContext(ViewerReadOnlyContext);
+  return <ReadOnlyContext.Provider value={viewerReadOnly}>{children}</ReadOnlyContext.Provider>;
+}
 const ThemeModeContext = createContext("dark");
 
 async function sha256Hex(str) {
@@ -322,7 +310,6 @@ function rankInfo(totalXP) {
    trailing alpha suffix like that. */
 const RANK_COLORS = {
   dark: { E: "#8A93B8", D: "#4ADE80", C: "#4F8EFF", B: "#FB6F92", A: "#FF9F45", S: "#6D7CFF", SS: "#F5FAFF" },
-  light: { E: "#6E7997", D: "#16A34A", C: "#2F6FEF", B: "#BE185D", A: "#C05F0F", S: "#6D7CFF", SS: "#111827" },
 };
 function rankColor(rank, mode) {
   return (RANK_COLORS[mode] || RANK_COLORS.dark)[rank] || (RANK_COLORS[mode] || RANK_COLORS.dark).C;
@@ -459,7 +446,11 @@ function defaultState() {
 // parts only count as pending on the nav dot from 6 PM.
 const HAIR_DAY_STEPS = [["wash", "Wash"], ["comb", "Comb"]];
 const HAIR_NIGHT_STEPS = [["minoxidil", "Minoxidil"]];
-const SKIN_AM_STEPS = [["amCleanser", "Cleanser"], ["amMoisturiser", "Moisturiser"], ["amSunscreen", "Sunscreen"]];
+const SKIN_AM_STEPS = [["amCleanser", "Cleanser"], ["amMoisturiser", "Moisturiser"]];
+// Sunscreen is optional: it can be ticked and is shown in the checklists, but
+// it is never required (not counted in totals, doesn't hold back "AM done").
+const SKIN_AM_OPTIONAL = [["amSunscreen", "Sunscreen (optional)"]];
+const SKIN_AM_SHOWN = [...SKIN_AM_STEPS, ...SKIN_AM_OPTIONAL];
 const SKIN_PM_STEPS = [["pmCleanser", "Cleanser"], ["pmMoisturiser", "Moisturiser"]];
 
 function careStatus(care, key) {
@@ -1542,6 +1533,11 @@ const MUSCLE_ABBR = {
 };
 const SKIP_REASONS = ["Work", "Health", "Other"];
 
+/* A workout counts as complete as soon as ONE exercise is done (an exercise is
+   done when it has sets and every set is ticked). Planned and extra exercises
+   both count. Skipped days are never complete. */
+const gymExerciseDone = (e) => Array.isArray(e?.sets) && e.sets.length > 0 && e.sets.every((x) => x.completed);
+const gymLogComplete = (log) => !!log && !log.skipped && [...(log.exercises || []), ...(log.extras || [])].some(gymExerciseDone);
 function gymTodayKey() {
   const d = new Date();
   return DAY_KEYS[d.getDay()]; // JS getDay(): 0=Sun..6=Sat, matches Sunday-first DAY_KEYS
@@ -1602,8 +1598,10 @@ function WorkoutCard({ s, set, locked }) {
   const tKey = gymTodayKey();
   const todayLog = gym.logs[today] || null;
   const todayPlanned = activeSchedule ? activeSchedule.days[tKey] : null;
-  const todayDone = todayLog && !todayLog.skipped ? todayLog.exercises.filter((e) => e.sets.length > 0 && e.sets.every((x) => x.completed)).length : 0;
+  const todayDone = todayLog && !todayLog.skipped ? todayLog.exercises.filter(gymExerciseDone).length : 0;
+  const todayComplete = gymLogComplete(todayLog);
   const rightLabel = todayLog?.skipped ? "skipped today"
+    : todayComplete ? (todayDone ? `✓ done · ${todayDone}/${todayLog.exercises.length}` : "✓ done")
     : todayLog ? `${todayDone}/${todayLog.exercises.length} today`
     : todayPlanned ? (todayPlanned.muscles.includes("Rest") ? "rest day" : todayPlanned.muscles.join(", "))
     : undefined;
@@ -1718,7 +1716,8 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
     });
   };
 
-  const doneCount = log && !log.skipped ? log.exercises.filter((e) => e.sets.length > 0 && e.sets.every((x) => x.completed)).length : 0;
+  const doneCount = log && !log.skipped ? log.exercises.filter(gymExerciseDone).length : 0;
+  const logComplete = gymLogComplete(log);
 
   return (
     <div>
@@ -1738,7 +1737,7 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
           </Touchable>
         </div>
         <span style={{ fontFamily: mono, color: C.accent, fontSize: 11.5 }}>
-          {log?.skipped ? "skipped" : log ? `${doneCount} / ${log.exercises.length} done` : plannedDay ? plannedDay.muscles.join(", ") : ""}
+          {log?.skipped ? "skipped" : logComplete ? `✓ workout done · ${doneCount} / ${log.exercises.length}` : log ? `${doneCount} / ${log.exercises.length} done` : plannedDay ? plannedDay.muscles.join(", ") : ""}
         </span>
       </div>
 
@@ -1797,8 +1796,8 @@ function TodayWorkoutSection({ gym, update, today, activeSchedule }) {
           {plannedDay.exercises.length > 0 && (
             <div className="flex items-center gap-2">
               <Touchable writeAction onClick={startDay} style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "10px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                <Dumbbell size={14} color="#fff" />
-                <span style={{ color: "#fff", fontFamily: sans, fontWeight: 700, fontSize: 13 }}>{isToday ? "Start Today's Workout" : "Log this day"}</span>
+                <Dumbbell size={14} color="var(--on-accent)" />
+                <span style={{ color: "var(--on-accent)", fontFamily: sans, fontWeight: 700, fontSize: 13 }}>{isToday ? "Start Today's Workout" : "Log this day"}</span>
               </Touchable>
               {isToday && (
                 <Touchable writeAction onClick={() => setSkipping(true)} style={{ borderRadius: 10, padding: "10px 14px", border: `1px solid ${C.outlineVariant}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -1928,8 +1927,8 @@ function CatchUpSection({ gym, update }) {
                     ))
                   )}
                   <Touchable writeAction onClick={() => markComplete(c.id)} style={{ background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                    <Check size={14} color="#fff" />
-                    <span style={{ color: "#fff", fontFamily: sans, fontWeight: 700, fontSize: 13 }}>Mark Complete</span>
+                    <Check size={14} color="var(--on-accent)" />
+                    <span style={{ color: "var(--on-accent)", fontFamily: sans, fontWeight: 700, fontSize: 13 }}>Mark Complete</span>
                   </Touchable>
                 </div>
               )}
@@ -2128,8 +2127,8 @@ function ExtraExercises({ date, log, update, gym, autoOpen = false }) {
               <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Cancel</span>
             </Touchable>
             <Touchable writeAction onClick={addExtra} style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-              <Plus size={14} color="#fff" />
-              <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add</span>
+              <Plus size={14} color="var(--on-accent)" />
+              <span style={{ color: "var(--on-accent)", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add</span>
             </Touchable>
           </div>
         </div>
@@ -2439,8 +2438,8 @@ function AddExerciseForm({ schedule, dayKey, gym, update, onDone }) {
           <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Cancel</span>
         </Touchable>
         <Touchable writeAction onClick={commit} style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-          <Plus size={14} color="#fff" />
-          <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add</span>
+          <Plus size={14} color="var(--on-accent)" />
+          <span style={{ color: "var(--on-accent)", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add</span>
         </Touchable>
       </div>
     </div>
@@ -2490,8 +2489,8 @@ function CreateScheduleCard({ update, gym }) {
               <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Cancel</span>
             </Touchable>
             <Touchable writeAction onClick={create} style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-              <Plus size={14} color="#fff" />
-              <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Create</span>
+              <Plus size={14} color="var(--on-accent)" />
+              <span style={{ color: "var(--on-accent)", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Create</span>
             </Touchable>
           </div>
         </div>
@@ -2563,8 +2562,8 @@ function ExerciseDatabaseCard({ gym, update }) {
             <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Cancel</span>
           </Touchable>
           <Touchable writeAction onClick={saveEdit} style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-            <Save size={14} color="#fff" />
-            <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Save</span>
+            <Save size={14} color="var(--on-accent)" />
+            <span style={{ color: "var(--on-accent)", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Save</span>
           </Touchable>
         </div>
       </div>
@@ -2647,8 +2646,8 @@ function ExerciseDatabaseCard({ gym, update }) {
                 <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Cancel</span>
               </Touchable>
               <Touchable writeAction onClick={addExercise} style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                <Plus size={14} color="#fff" />
-                <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add</span>
+                <Plus size={14} color="var(--on-accent)" />
+                <span style={{ color: "var(--on-accent)", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add</span>
               </Touchable>
             </div>
           </div>
@@ -2687,7 +2686,7 @@ function VitalityOverviewTiles({ s, eff, onOpenProgress, ringMax = 9, ringLabel 
         }}
       >
         <div style={{ ...labelStyle, color: mix("#fff", 75) }}>TODAY</div>
-        <div style={{ ...valueStyle, color: "#fff" }}>{todayMuscle}</div>
+        <div style={{ ...valueStyle, color: "var(--on-accent)" }}>{todayMuscle}</div>
         <div style={{ ...subStyle, color: activeSchedule ? "#fff" : mix("#fff", 65) }}>{activeSchedule ? activeSchedule.name : "No active workout"}</div>
       </div>
       <Touchable
@@ -2722,7 +2721,7 @@ function VitalityTab({ s, effective, set, locked, onOpenProgress }) {
       <ScreenHeader title="Vitality" sub="Physical strength, endurance and health." color={C.vitality} score={score} />
       <VitalityOverviewTiles s={s} eff={eff} onOpenProgress={onOpenProgress} />
       <LockWrap locked={locked} color={C.vitality}>
-        <WorkoutCard s={s} set={set} locked={locked} />
+        <SharedScope><WorkoutCard s={s} set={set} locked={locked} /></SharedScope>
         <Mission title="Muay Thai" points={65} earned={Object.values(eff.muayThai).filter(Boolean).length} color={C.vitality}>
           <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 10 }}>
             Weekday classes, 3 Aug – 30 Oct.{" "}
@@ -3363,7 +3362,7 @@ function CareDropdown({ which, care, dateKey, idx, weekNum, shiftDay, set }) {
   const color = C.accent;
   const log = care?.[which]?.logs?.[dateKey] || {};
   const sections = which === "skin"
-    ? [["MORNING", SKIN_AM_STEPS], ["NIGHT", SKIN_PM_STEPS]]
+    ? [["MORNING", SKIN_AM_SHOWN], ["NIGHT", SKIN_PM_STEPS]]
     : [["DAY", HAIR_DAY_STEPS], ["NIGHT", HAIR_NIGHT_STEPS]];
   const arrow = (dir, Icon) => (
     <Touchable onClick={() => shiftDay(dir)} style={{ color: C.onSurfaceVariant, width: 32, height: 32, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -3399,7 +3398,7 @@ function ResolveTab({ s, effective, set, locked, wealth, care, careOpen, setCare
   const score = resolveScore(eff);
   const [viewDate, setViewDate] = useState(() => {
     const t = dateOnly(new Date());
-    return t >= QUEST_START && t <= QUEST_END ? t : QUEST_START;
+    return t >= QUEST_START && t <= QUEST_END ? t : t > QUEST_END ? QUEST_END : QUEST_START;
   });
   const key = fmtDate(viewDate);
   const log = s.dailyLogs[key] || { wake: false, plan: false, hair: false, teeth: false };
@@ -3676,8 +3675,8 @@ function BonusTasksMission({ s, set }) {
               display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
             }}
           >
-            <Plus size={14} color="#fff" />
-            <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add Task</span>
+            <Plus size={14} color="var(--on-accent)" />
+            <span style={{ color: "var(--on-accent)", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add Task</span>
           </Touchable>
         ) : (
           <div className="flex flex-col gap-2">
@@ -3720,8 +3719,8 @@ function BonusTasksMission({ s, set }) {
                   display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
                 }}
               >
-                <Plus size={14} color="#fff" />
-                <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add Task</span>
+                <Plus size={14} color="var(--on-accent)" />
+                <span style={{ color: "var(--on-accent)", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add Task</span>
               </Touchable>
             </div>
           </div>
@@ -4110,8 +4109,8 @@ function DietExtras({ date, log, set }) {
               onClick={addExtra}
               style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
             >
-              <Plus size={14} color="#fff" />
-              <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add</span>
+              <Plus size={14} color="var(--on-accent)" />
+              <span style={{ color: "var(--on-accent)", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add</span>
             </Touchable>
           </div>
         </div>
@@ -4296,8 +4295,8 @@ function DietPlanCard({ plan, set }) {
                     onClick={saveEdit}
                     style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
                   >
-                    <Save size={14} color="#fff" />
-                    <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Save</span>
+                    <Save size={14} color="var(--on-accent)" />
+                    <span style={{ color: "var(--on-accent)", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Save</span>
                   </Touchable>
                 </div>
               </div>
@@ -4333,8 +4332,8 @@ function DietPlanCard({ plan, set }) {
               onClick={() => setAdding(true)}
               style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
             >
-              <Plus size={14} color="#fff" />
-              <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add Item</span>
+              <Plus size={14} color="var(--on-accent)" />
+              <span style={{ color: "var(--on-accent)", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add Item</span>
             </Touchable>
             <Touchable
               writeAction
@@ -4380,8 +4379,8 @@ function DietPlanCard({ plan, set }) {
                 onClick={addItem}
                 style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
               >
-                <Plus size={14} color="#fff" />
-                <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add</span>
+                <Plus size={14} color="var(--on-accent)" />
+                <span style={{ color: "var(--on-accent)", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add</span>
               </Touchable>
             </div>
           </div>
@@ -4449,8 +4448,8 @@ function CreateDietCard({ set, onCreate }) {
               onClick={createPlan}
               style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
             >
-              <Plus size={14} color="#fff" />
-              <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Create</span>
+              <Plus size={14} color="var(--on-accent)" />
+              <span style={{ color: "var(--on-accent)", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Create</span>
             </Touchable>
           </div>
         </div>
@@ -4781,8 +4780,8 @@ function DayPlanCard({ set, selected, dayTasks }) {
             onClick={() => setAdding(true)}
             style={{ background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
           >
-            <Plus size={14} color="#fff" />
-            <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add Task</span>
+            <Plus size={14} color="var(--on-accent)" />
+            <span style={{ color: "var(--on-accent)", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add Task</span>
           </Touchable>
         ) : (
           <div className="flex flex-col gap-2">
@@ -4810,8 +4809,8 @@ function DayPlanCard({ set, selected, dayTasks }) {
                 onClick={addTask}
                 style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
               >
-                <Plus size={14} color="#fff" />
-                <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add</span>
+                <Plus size={14} color="var(--on-accent)" />
+                <span style={{ color: "var(--on-accent)", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add</span>
               </Touchable>
             </div>
           </div>
@@ -4923,8 +4922,8 @@ function UnlistedTasksCard({ set, selected, unlisted }) {
                 onClick={addUnlisted}
                 style={{ flex: 1, background: C.accent, borderRadius: 10, padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
               >
-                <Plus size={14} color="#fff" />
-                <span style={{ color: "#fff", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add</span>
+                <Plus size={14} color="var(--on-accent)" />
+                <span style={{ color: "var(--on-accent)", fontFamily: sans, fontWeight: 600, fontSize: 13 }}>Add</span>
               </Touchable>
             </div>
           </div>
@@ -5055,207 +5054,44 @@ function CalendarDropdown({ label, color, children }) {
   );
 }
 
-function CalendarTab({ state, set }) {
-  const today = dateOnly(new Date());
-  const defaultMonthIdx = (() => {
-    const i = CAL_MONTHS.findIndex((m) => today.getFullYear() === m.year && today.getMonth() === m.month);
-    return i >= 0 ? i : 0;
-  })();
-  const [monthIdx, setMonthIdx] = useState(defaultMonthIdx);
-  const [selected, setSelected] = useState(() =>
-    fmtDate(today >= QUEST_START && today <= QUEST_END ? today : QUEST_START)
-  );
-  const [selectedWeek, setSelectedWeek] = useState(() => currentWeekNum());
-  const [view, setView] = useState("daily");
-
-  const { label: monthLabel, year, month } = CAL_MONTHS[monthIdx];
-  const firstOfMonth = new Date(year, month, 1);
-  const startWeekday = firstOfMonth.getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-
-  const cells = [];
-  for (let i = 0; i < startWeekday; i++) cells.push(null);
-  for (let day = 1; day <= daysInMonth; day++) cells.push(new Date(year, month, day));
-
-  const selDate = new Date(selected + "T00:00:00");
-  const selInRange = selDate >= QUEST_START && selDate <= QUEST_END;
-
-  return (
-    <div className="pb-4">
-      <div className="px-4 pt-5 pb-4 flex items-center gap-2">
-        <Diamond size={7} color={C.accent} glow />
-        <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 22, letterSpacing: 0.3 }}>CALENDAR</div>
-      </div>
-
-      <div className="mx-4 mb-4 flex items-center" style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 12, padding: 3 }}>
-        {[{ id: "daily", label: "Daily" }, { id: "weekly", label: "Weekly" }].map((v) => {
-          const active = view === v.id;
-          return (
-            <Touchable
-              key={v.id}
-              onClick={() => setView(v.id)}
-              style={{
-                flex: 1, textAlign: "center", padding: "8px 0", borderRadius: 9,
-                background: active ? mix(C.accent, 20) : "transparent",
-              }}
-            >
-              <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 13, color: active ? C.accent : C.onSurfaceVariant }}>
-                {v.label}
-              </span>
-            </Touchable>
-          );
-        })}
-      </div>
-
-      {view === "daily" && (
-        <>
-          <div className="mx-4 mb-3 flex items-center justify-between">
-            <Touchable
-              onClick={() => setMonthIdx((m) => clamp(m - 1, 0, CAL_MONTHS.length - 1))}
-              style={{ width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", opacity: monthIdx === 0 ? 0.3 : 1, pointerEvents: monthIdx === 0 ? "none" : "auto" }}
-            >
-              <ChevronLeft size={18} color={C.onSurfaceVariant} />
-            </Touchable>
-            <span style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 15 }}>
-              {monthLabel} {year}
-            </span>
-            <Touchable
-              onClick={() => setMonthIdx((m) => clamp(m + 1, 0, CAL_MONTHS.length - 1))}
-              style={{ width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", opacity: monthIdx === CAL_MONTHS.length - 1 ? 0.3 : 1, pointerEvents: monthIdx === CAL_MONTHS.length - 1 ? "none" : "auto" }}
-            >
-              <ChevronRight size={18} color={C.onSurfaceVariant} />
-            </Touchable>
-          </div>
-
-          <div className="mx-4 mb-2 flex items-center justify-center gap-4">
-            <div className="flex items-center gap-1.5">
-              <span style={{ fontFamily: mono, fontSize: 10, fontWeight: 700, color: C.accent }}>42g</span>
-              <span style={{ fontFamily: sans, fontSize: 10.5, color: C.onSurfaceVariant }}>Protein</span>
-            </div>
-            <LegendDot color={C.vitality} label="Vitality" />
-            <LegendDot color={C.resolve} label="Resolve" />
-            <LegendDot color={C.accent} label="Care" />
-          </div>
-
-          <div className="mx-4" style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 16, padding: 12 }}>
-            <div className="grid grid-cols-7 gap-1 mb-1">
-              {WEEKDAY_LETTERS.map((w, i) => (
-                <div key={i} style={{ textAlign: "center", fontFamily: mono, fontSize: 9.5, color: C.faint }}>{w}</div>
-              ))}
-            </div>
-            <div className="grid grid-cols-7 gap-1">
-              {cells.map((d, i) => {
-                if (!d) return <div key={i} />;
-                const ds = fmtDate(d);
-                const status = calDayStatus(state, ds);
-                const isToday = fmtDate(today) === ds;
-                const isSel = selected === ds;
-                const inRange = d >= QUEST_START && d <= QUEST_END;
-                return (
-                  <Touchable
-                    key={i}
-                    onClick={() => { if (inRange) setSelected(ds); }}
-                    style={{
-                      aspectRatio: "1", borderRadius: 10,
-                      background: isSel ? mix(C.accent, 18) : "transparent",
-                      border: isToday ? `1px solid ${C.accent}` : "1px solid transparent",
-                      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
-                      opacity: inRange ? 1 : 0.28, pointerEvents: inRange ? "auto" : "none",
-                    }}
-                  >
-                    <span style={{ fontFamily: mono, fontSize: 11, color: isSel ? C.accent : C.onSurface, fontWeight: isToday ? 800 : 500 }}>
-                      {d.getDate()}
-                    </span>
-                    <span style={{ fontFamily: mono, fontSize: 8, lineHeight: "9px", fontWeight: 700, color: status?.dietGrams ? C.accent : "transparent" }}>
-                      {status?.dietGrams ? `${Math.round(status.dietGrams)}g` : "0g"}
-                    </span>
-                    <div className="flex items-center gap-[2px]">
-                      <StatusDot frac={status?.vitalityFrac} color={C.vitality} />
-                      <StatusDot frac={status?.resolveFrac} color={C.resolve} />
-                      <StatusDot frac={status?.careFrac} color={C.accent} />
-                    </div>
-                  </Touchable>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="pt-4">
-            <CalendarDropdown
-              label={selInRange ? `Day details — ${selDate.toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : "Day details"}
-              color={C.accent}
-            >
-              {!selInRange ? (
-                <p style={{ color: C.faint, fontSize: 12.5, padding: "0 16px 12px" }}>Outside the quest window (2 Aug – 31 Oct 2026).</p>
-              ) : (
-                <CalendarDayDetail date={selected} state={state} set={set} />
-              )}
-            </CalendarDropdown>
-          </div>
-        </>
-      )}
-
-      {/* Separate weekly calendar — laundry/iron + arm/ab training aren't
-          daily, so they get their own week-picker grid rather than being
-          tied to whichever day happens to be selected above. */}
-      {view === "weekly" && (
-        <div>
-          <div className="mx-4 mb-2 flex items-center justify-center gap-4">
-            <LegendDot color={C.vitality} label="Vitality" />
-            <LegendDot color={C.resolve} label="Resolve" />
-          </div>
-
-          <div className="mx-4" style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 16, padding: 12 }}>
-            <div className="grid grid-cols-7 gap-1">
-              {Array.from({ length: 13 }, (_, i) => i + 1).map((wn) => {
-                const { resolveDone, vitalityDone } = weekTaskCounts(state, wn);
-                const active = selectedWeek === wn;
-                return (
-                  <Touchable
-                    key={wn}
-                    onClick={() => setSelectedWeek(wn)}
-                    style={{
-                      aspectRatio: "1", borderRadius: 10,
-                      background: active ? mix(C.resolve, 18) : "transparent",
-                      border: active ? `1px solid ${C.resolve}` : "1px solid transparent",
-                      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3,
-                    }}
-                  >
-                    <span style={{ fontFamily: mono, fontSize: 11, color: active ? C.resolve : C.onSurface, fontWeight: active ? 800 : 500 }}>
-                      W{wn}
-                    </span>
-                    <div className="flex items-center gap-[3px]">
-                      <DualDot done={vitalityDone} color={C.vitality} />
-                      <DualDot done={resolveDone} color={C.resolve} />
-                    </div>
-                  </Touchable>
-                );
-              })}
-              {Array.from({ length: (7 - (13 % 7)) % 7 }, (_, i) => <div key={`pad-${i}`} />)}
-            </div>
-          </div>
-
-          <div className="pt-3">
-            <CalendarDropdown label={`Week ${selectedWeek} details`} color={C.resolve}>
-              <CalendarWeeklyCard weekNum={selectedWeek} state={state} set={set} />
-            </CalendarDropdown>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+/* =================================================================
+   ONE CALENDAR FOR BOTH LEVELS. The month grid and day panel cover every
+   date from 2 Aug 2026 to 30 Jan 2027 whichever level is open. Diet, Planner
+   and Workout are shared data, so they show (and edit) on every date. A
+   level's own quest log (missions, habits, skin/hair) shows for that level's
+   dates; for the other level's dates the panel says so and offers a switch.
+================================================================= */
+const ALL_CAL_MONTHS = [
+  { label: "August", year: 2026, month: 7 },
+  { label: "September", year: 2026, month: 8 },
+  { label: "October", year: 2026, month: 9 },
+  { label: "November", year: 2026, month: 10 },
+  { label: "December", year: 2026, month: 11 },
+  { label: "January", year: 2027, month: 0 },
+];
+const calInL1 = (ds) => ds >= fmtDate(QUEST_START) && ds <= fmtDate(QUEST_END);
+const calInSpan = (ds) => ds >= fmtDate(QUEST_START) && ds <= L2_DATES[L2_DAYS - 1];
+function calClampDay(today) {
+  const k = fmtDate(today);
+  const first = fmtDate(QUEST_START);
+  const last = L2_DATES[L2_DAYS - 1];
+  return k < first ? first : k > last ? last : k;
+}
+// What the grid can show for a date that belongs to the other level: only the
+// shared data (protein from the diet log).
+function sharedDayStatus(state, ds) {
+  const dlog = state.diet?.logs?.[ds];
+  const plan = dlog?.planId ? (state.diet.plans || []).find((p) => p.id === dlog.planId) : null;
+  let dietGrams = plan
+    ? plan.items.filter((i) => dlog.completed?.[i.id]).reduce((sum, i) => sum + (Number(i.protein) || 0), 0)
+    : 0;
+  dietGrams += (dlog?.extras || []).reduce((sum, i) => sum + (Number(i.protein) || 0), 0);
+  return { dietGrams };
 }
 
-function CalendarDayDetail({ date, state, set }) {
+function CalendarDietMission({ date, state, set }) {
   const readOnly = useContext(ReadOnlyContext);
   const [picking, setPicking] = useState(false);
-
-  const d = new Date(date + "T00:00:00");
-  const idx = dayIndex(d);
-  const weekNum = clamp(Math.ceil(idx / 7), 1, 13);
-  const label = d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-  const cc = careCounts(state.care, date);
-
   const plans = state.diet.plans || [];
   const dlog = state.diet.logs[date] || { planId: null, completed: {} };
   const activePlan = plans.find((p) => p.id === dlog.planId) || null;
@@ -5266,20 +5102,8 @@ function CalendarDayDetail({ date, state, set }) {
   const dietConsumedProtein = (activePlan
     ? activePlan.items.filter((i) => dlog.completed?.[i.id]).reduce((sum, i) => sum + (Number(i.protein) || 0), 0)
     : 0) + dietExtraProtein;
-
-  const isMtDay = MT_DATES.includes(date);
-  const mtDone = !!state.vitality.muayThai[date];
-
-  const rlog = state.resolve.dailyLogs[date] || { wake: false, plan: false, hair: false, teeth: false };
-
   return (
-    <div>
-      <div className="px-5 pb-2 flex items-baseline gap-2">
-        <span style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 14 }}>{label}</span>
-        <span style={{ fontFamily: mono, color: C.faint, fontSize: 11 }}>Day {clamp(idx, 1, TOTAL_DAYS)} · Week {weekNum}</span>
-      </div>
-
-      <Mission
+    <Mission
         title="Diet"
         rightLabel={`${Math.round(dietConsumedProtein)} / ${Math.round(dietTotalProtein)}g`}
         color={C.accent}
@@ -5366,6 +5190,329 @@ function CalendarDayDetail({ date, state, set }) {
 
         <DietExtras date={date} log={dlog} set={set} />
       </Mission>
+  );
+}
+
+/* Planner tasks + workout log for one date (shared data, same in both levels). */
+function CalendarSharedExtras({ date, state, set }) {
+  const tasks = state.planner?.days?.[date] || [];
+  const doneTasks = tasks.filter((t) => t.completed).length;
+  const gym = state.vitality?.gym;
+  const log = gym?.logs?.[date] || null;
+  const complete = gymLogComplete(log);
+  const exName = (e) => gym?.exercises?.find((x) => x.id === e.exerciseId)?.name || e.name || "Exercise";
+  const rows = log && !log.skipped
+    ? [...(log.exercises || []).map((e) => ({ e, extra: false })), ...(log.extras || []).map((e) => ({ e, extra: true }))]
+    : [];
+  return (
+    <SharedScope>
+      <Mission title="Planner" rightLabel={tasks.length ? `${doneTasks}/${tasks.length}` : "none"} color={C.accent}>
+        {tasks.length === 0 ? (
+          <p style={{ color: C.faint, fontSize: 12.5 }}>Nothing planned for this day.</p>
+        ) : (
+          <div className="flex flex-col">
+            {tasks.map((t) => (
+              <label key={t.id} className="flex items-center gap-1">
+                <Check2
+                  checked={!!t.completed}
+                  color={C.accent}
+                  onClick={() => set((dr) => {
+                    const x = (dr.planner.days[date] || []).find((y) => y.id === t.id);
+                    if (x) x.completed = !x.completed;
+                  })}
+                />
+                <span style={{ color: t.completed ? C.faint : C.onSurfaceVariant, fontSize: 13, textDecoration: t.completed ? "line-through" : "none" }}>{t.title}</span>
+              </label>
+            ))}
+          </div>
+        )}
+      </Mission>
+      <Mission title="Workout" rightLabel={log?.skipped ? "skipped" : complete ? "✓ done" : log ? "in progress" : "none"} color={C.vitality}>
+        {!log ? (
+          <p style={{ color: C.faint, fontSize: 12.5 }}>No workout logged. Log it from Vitality › Workout.</p>
+        ) : log.skipped ? (
+          <p style={{ color: C.onSurfaceVariant, fontSize: 12.5 }}>Skipped{log.skipReason ? ` — ${log.skipReason}` : ""}.</p>
+        ) : rows.length === 0 ? (
+          <p style={{ color: C.faint, fontSize: 12.5 }}>{(log.muscles || []).join(", ") || "Rest day"} — nothing logged.</p>
+        ) : (
+          <div className="flex flex-col gap-1.5">
+            <span style={{ fontFamily: mono, fontSize: 10.5, color: C.faint }}>{(log.muscles || []).join(", ")}</span>
+            {rows.map(({ e, extra }, i) => {
+              const sets = Array.isArray(e.sets) ? e.sets : [];
+              const doneSets = sets.filter((x) => x.completed).length;
+              const done = gymExerciseDone(e);
+              return (
+                <div key={e.id || `${e.exerciseId}-${i}`} className="flex items-center gap-2">
+                  <Diamond size={6} color={done ? C.vitality : C.faint} glow={done} />
+                  <span style={{ flex: 1, minWidth: 0, color: done ? C.onSurface : C.onSurfaceVariant, fontSize: 13 }}>
+                    {exName(e)}{extra ? <span style={{ fontFamily: mono, fontSize: 9.5, color: C.faint }}> · extra</span> : null}
+                  </span>
+                  <span style={{ fontFamily: mono, fontSize: 11, color: done ? C.vitality : C.faint }}>{doneSets}/{sets.length}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Mission>
+    </SharedScope>
+  );
+}
+
+/* Day panel for a date that belongs to the other level. */
+/* One calendar for both levels. Each date shows ITS level's items and legend:
+   Level 1 dates (2 Aug – 31 Oct) use Level 1's quest, Level 2 dates (1 Nov –
+   30 Jan) use Level 2's. The open level's state is live; the other level is
+   loaded on demand (`other`) and edits to it are saved with the Save button.
+   Diet, planner and workout are shared, so they appear on every date. */
+function CommonCalendarTab({ level, state, other, set, setOther, l1Locked }) {
+  const viewerRO = useContext(ViewerReadOnlyContext);
+  const today = dateOnly(new Date());
+  const startDs = calClampDay(today);
+  const lvOf = (ds) => (calInL1(ds) ? 1 : 2);
+  const monthIdxOf = (ds) => {
+    const sd = new Date(ds + "T00:00:00");
+    const i = ALL_CAL_MONTHS.findIndex((m) => sd.getFullYear() === m.year && sd.getMonth() === m.month);
+    return i >= 0 ? i : 0;
+  };
+  const [monthIdx, setMonthIdx] = useState(() => monthIdxOf(startDs));
+  const [selected, setSelected] = useState(startDs);
+  const [view, setView] = useState("daily");
+  const [weekLv, setWeekLv] = useState(null); // null = follow the selected day's level
+  const [week1, setWeek1] = useState(() => currentWeekNum());
+  const [week2, setWeek2] = useState(() => l2WeekOf(startDs));
+
+  const s1 = level === 1 ? state : other;
+  const s2 = level === 2 ? state : other;
+  const sOf = (lv) => (lv === 1 ? s1 : s2);
+  const setOf = (lv) => (lv === level ? set : setOther);
+  const roOf = (lv) => viewerRO || (lv === 1 && l1Locked);
+
+  const { label: monthLabel, year, month } = ALL_CAL_MONTHS[monthIdx];
+  const monthLv = year * 12 + month >= 2026 * 12 + 10 ? 2 : 1;
+  const startWeekday = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(null);
+  for (let day = 1; day <= daysInMonth; day++) cells.push(new Date(year, month, day));
+
+  const selInCal = calInSpan(selected);
+  const selLv = lvOf(selected);
+  const wLv = weekLv || (selInCal ? selLv : level);
+  const loading = (lv) => (
+    <p style={{ color: C.faint, fontSize: 12.5, padding: "0 16px 12px" }}>Loading Level {lv}…</p>
+  );
+  const navBtn = (dir, disabled) => (
+    <Touchable
+      onClick={() => setMonthIdx((m) => clamp(m + dir, 0, ALL_CAL_MONTHS.length - 1))}
+      style={{ width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", opacity: disabled ? 0.3 : 1, pointerEvents: disabled ? "none" : "auto" }}
+    >
+      {dir < 0 ? <ChevronLeft size={18} color={C.onSurfaceVariant} /> : <ChevronRight size={18} color={C.onSurfaceVariant} />}
+    </Touchable>
+  );
+
+  return (
+    <div className="pb-4">
+      <div className="px-4 pt-5 pb-4 flex items-center gap-2">
+        <Diamond size={7} color={C.accent} glow />
+        <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 22, letterSpacing: 0.3 }}>CALENDAR</div>
+      </div>
+
+      <div className="mx-4 mb-4 flex items-center" style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 12, padding: 3 }}>
+        {[{ id: "daily", label: "Daily" }, { id: "weekly", label: "Weekly" }].map((v) => {
+          const active = view === v.id;
+          return (
+            <Touchable key={v.id} onClick={() => setView(v.id)} style={{ flex: 1, textAlign: "center", padding: "8px 0", borderRadius: 9, background: active ? mix(C.accent, 20) : "transparent" }}>
+              <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 13, color: active ? C.accent : C.onSurfaceVariant }}>{v.label}</span>
+            </Touchable>
+          );
+        })}
+      </div>
+
+      {view === "daily" && (
+        <>
+          <div className="mx-4 mb-1 flex items-center justify-between">
+            {navBtn(-1, monthIdx === 0)}
+            <span style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 15 }}>{monthLabel} {year}</span>
+            {navBtn(1, monthIdx === ALL_CAL_MONTHS.length - 1)}
+          </div>
+          <div style={{ textAlign: "center", fontFamily: mono, fontSize: 10, color: C.faint, marginBottom: 6 }}>
+            Level {monthLv} · {LEVEL_NAMES[monthLv]}
+          </div>
+
+          <div className="mx-4 mb-2 flex items-center justify-center gap-3 flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <span style={{ fontFamily: mono, fontSize: 10, fontWeight: 700, color: C.accent }}>42g</span>
+              <span style={{ fontFamily: sans, fontSize: 10.5, color: C.onSurfaceVariant }}>Protein</span>
+            </div>
+            {monthLv === 2 && <LegendDot color={C.wisdom} label="Wisdom" />}
+            <LegendDot color={C.vitality} label="Vitality" />
+            <LegendDot color={C.resolve} label="Resolve" />
+            <LegendDot color={C.accent} label="Care" />
+          </div>
+
+          <div className="mx-4" style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 16, padding: 12 }}>
+            <div className="grid grid-cols-7 gap-1 mb-1">
+              {WEEKDAY_LETTERS.map((w, i) => (
+                <div key={i} style={{ textAlign: "center", fontFamily: mono, fontSize: 9.5, color: C.faint }}>{w}</div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7 gap-1">
+              {cells.map((d, i) => {
+                if (!d) return <div key={i} />;
+                const ds = fmtDate(d);
+                const inRange = calInSpan(ds);
+                const lv = lvOf(ds);
+                const sx = sOf(lv);
+                const status = !inRange ? null : sx ? (lv === 1 ? calDayStatus(sx, ds) : l2CalDayStatus(sx, ds)) : sharedDayStatus(state, ds);
+                const isToday = fmtDate(today) === ds;
+                const isSel = selected === ds;
+                return (
+                  <Touchable
+                    key={i}
+                    onClick={() => { if (inRange) setSelected(ds); }}
+                    style={{
+                      aspectRatio: "1", borderRadius: 10,
+                      background: isSel ? mix(C.accent, 18) : "transparent",
+                      border: isToday ? `1px solid ${C.accent}` : "1px solid transparent",
+                      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
+                      opacity: inRange ? 1 : 0.28, pointerEvents: inRange ? "auto" : "none",
+                    }}
+                  >
+                    <span style={{ fontFamily: mono, fontSize: 11, color: isSel ? C.accent : C.onSurface, fontWeight: isToday ? 800 : 500 }}>{d.getDate()}</span>
+                    <span style={{ fontFamily: mono, fontSize: 8, lineHeight: "9px", fontWeight: 700, color: status?.dietGrams ? C.accent : "transparent" }}>
+                      {status?.dietGrams ? `${Math.round(status.dietGrams)}g` : "0g"}
+                    </span>
+                    {inRange && sx ? (
+                      <div className="flex items-center gap-[2px]">
+                        {lv === 2 && <StatusDot frac={status?.wisdomFrac} color={C.wisdom} />}
+                        <StatusDot frac={status?.vitalityFrac} color={C.vitality} />
+                        <StatusDot frac={status?.resolveFrac} color={C.resolve} />
+                        <StatusDot frac={status?.careFrac} color={C.accent} />
+                      </div>
+                    ) : <div style={{ height: 5 }} />}
+                  </Touchable>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="pt-4">
+            <CalendarDropdown
+              label={selInCal ? `Day details — ${parseDS(selected).toLocaleDateString("en-US", { month: "short", day: "numeric" })} · Level ${selLv}` : "Day details"}
+              color={C.accent}
+            >
+              {!selInCal ? (
+                <p style={{ color: C.faint, fontSize: 12.5, padding: "0 16px 12px" }}>Outside both levels (2 Aug 2026 – 30 Jan 2027).</p>
+              ) : !sOf(selLv) ? loading(selLv) : (
+                <ReadOnlyContext.Provider value={roOf(selLv)}>
+                  {selLv === 1
+                    ? <CalendarDayDetail date={selected} state={s1} set={setOf(1)} />
+                    : <L2CalendarDayDetail date={selected} s={s2} set={setOf(2)} />}
+                </ReadOnlyContext.Provider>
+              )}
+            </CalendarDropdown>
+          </div>
+        </>
+      )}
+
+      {view === "weekly" && (
+        <div>
+          <div className="mx-4 mb-3 flex items-center" style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 12, padding: 3 }}>
+            {[1, 2].map((lv) => {
+              const active = wLv === lv;
+              return (
+                <Touchable key={lv} onClick={() => setWeekLv(lv)} style={{ flex: 1, textAlign: "center", padding: "6px 0", borderRadius: 9, background: active ? mix(C.resolve, 18) : "transparent" }}>
+                  <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 12, color: active ? C.resolve : C.onSurfaceVariant }}>Level {lv} · {LEVEL_NAMES[lv]}</span>
+                </Touchable>
+              );
+            })}
+          </div>
+          <div className="mx-4 mb-2 flex items-center justify-center gap-4">
+            <LegendDot color={C.vitality} label="Vitality" />
+            <LegendDot color={C.resolve} label="Resolve" />
+          </div>
+          {!sOf(wLv) ? loading(wLv) : (
+            <>
+              <div className="mx-4" style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 16, padding: 12 }}>
+                <div className="grid grid-cols-7 gap-1">
+                  {Array.from({ length: 13 }, (_, i) => i + 1).map((wn) => {
+                    const dots = wLv === 1
+                      ? (() => { const c = weekTaskCounts(s1, wn); return { vitality: c.vitalityDone, resolve: c.resolveDone }; })()
+                      : l2WeekDots(s2, wn);
+                    const active = (wLv === 1 ? week1 : week2) === wn;
+                    return (
+                      <Touchable
+                        key={wn}
+                        onClick={() => (wLv === 1 ? setWeek1(wn) : setWeek2(wn))}
+                        style={{
+                          aspectRatio: "1", borderRadius: 10,
+                          background: active ? mix(C.resolve, 18) : "transparent",
+                          border: active ? `1px solid ${C.resolve}` : "1px solid transparent",
+                          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3,
+                        }}
+                      >
+                        <span style={{ fontFamily: mono, fontSize: 11, color: active ? C.resolve : C.onSurface, fontWeight: active ? 800 : 500 }}>W{wn}</span>
+                        <div className="flex items-center gap-[3px]">
+                          <DualDot done={dots.vitality} color={C.vitality} />
+                          <DualDot done={dots.resolve} color={C.resolve} />
+                        </div>
+                      </Touchable>
+                    );
+                  })}
+                  {Array.from({ length: (7 - (13 % 7)) % 7 }, (_, i) => <div key={`pad-${i}`} />)}
+                </div>
+              </div>
+              <div className="pt-3">
+                <CalendarDropdown label={`Level ${wLv} · Week ${wLv === 1 ? week1 : week2} details`} color={C.resolve}>
+                  <ReadOnlyContext.Provider value={roOf(wLv)}>
+                    {wLv === 1
+                      ? <CalendarWeeklyCard weekNum={week1} state={s1} set={setOf(1)} />
+                      : <L2CalendarWeekCard w={week2} s={s2} set={setOf(2)} />}
+                  </ReadOnlyContext.Provider>
+                </CalendarDropdown>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CalendarDayDetail({ date, state, set }) {
+  const readOnly = useContext(ReadOnlyContext);
+  const [picking, setPicking] = useState(false);
+
+  const d = new Date(date + "T00:00:00");
+  const idx = dayIndex(d);
+  const weekNum = clamp(Math.ceil(idx / 7), 1, 13);
+  const label = d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  const cc = careCounts(state.care, date);
+
+  const plans = state.diet.plans || [];
+  const dlog = state.diet.logs[date] || { planId: null, completed: {} };
+  const activePlan = plans.find((p) => p.id === dlog.planId) || null;
+  const dietTotalProtein = activePlan
+    ? activePlan.items.reduce((sum, i) => sum + (Number(i.protein) || 0), 0)
+    : 0;
+  const dietExtraProtein = (dlog.extras || []).reduce((sum, i) => sum + (Number(i.protein) || 0), 0);
+  const dietConsumedProtein = (activePlan
+    ? activePlan.items.filter((i) => dlog.completed?.[i.id]).reduce((sum, i) => sum + (Number(i.protein) || 0), 0)
+    : 0) + dietExtraProtein;
+
+  const isMtDay = MT_DATES.includes(date);
+  const mtDone = !!state.vitality.muayThai[date];
+
+  const rlog = state.resolve.dailyLogs[date] || { wake: false, plan: false, hair: false, teeth: false };
+
+  return (
+    <div>
+      <div className="px-5 pb-2 flex items-baseline gap-2">
+        <span style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 14 }}>{label}</span>
+        <span style={{ fontFamily: mono, color: C.faint, fontSize: 11 }}>Day {clamp(idx, 1, TOTAL_DAYS)} · Week {weekNum}</span>
+      </div>
+
+      <SharedScope><CalendarDietMission date={date} state={state} set={set} /></SharedScope>
 
       {isMtDay && (
         <Mission title="Vitality" points={1} earned={mtDone ? 1 : 0} color={C.vitality}>
@@ -5395,7 +5542,7 @@ function CalendarDayDetail({ date, state, set }) {
       </Mission>
 
       <Mission title="Skin & hair" rightLabel={`${cc.am + cc.pm + cc.hDay + cc.hNight}/${CARE_SKIN_TOTAL + CARE_HAIR_TOTAL}`} color={C.accent}>
-          {[["SKIN · MORNING", "skin", SKIN_AM_STEPS], ["SKIN · NIGHT", "skin", SKIN_PM_STEPS], ["HAIR · DAY", "hair", HAIR_DAY_STEPS], ["HAIR · NIGHT", "hair", HAIR_NIGHT_STEPS]].map(([title, group, steps]) => (
+          {[["SKIN · MORNING", "skin", SKIN_AM_SHOWN], ["SKIN · NIGHT", "skin", SKIN_PM_STEPS], ["HAIR · DAY", "hair", HAIR_DAY_STEPS], ["HAIR · NIGHT", "hair", HAIR_NIGHT_STEPS]].map(([title, group, steps]) => (
             <div key={title}>
               <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, letterSpacing: 0.5, marginTop: 6 }}>{title}</div>
               {steps.map(([k, lbl]) => (
@@ -5407,6 +5554,7 @@ function CalendarDayDetail({ date, state, set }) {
             </div>
           ))}
         </Mission>
+      <CalendarSharedExtras date={date} state={state} set={set} />
     </div>
   );
 }
@@ -5869,23 +6017,6 @@ function QuestBar({ state, set, today, onOpenCare }) {
 }
 
 /* ---------------------------------------------------------------
-   THEME TOGGLE — small sun/moon pill, used in the top bar & code gate
---------------------------------------------------------------- */
-function ThemeToggle({ mode, onToggle }) {
-  return (
-    <Touchable
-      onClick={onToggle}
-      style={{
-        width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-        background: C.containerHigh, border: `1px solid ${C.outlineVariant}`,
-      }}
-    >
-      {mode === "dark" ? <Moon size={15} color={C.accent} /> : <Sun size={15} color={C.accent} />}
-    </Touchable>
-  );
-}
-
-/* ---------------------------------------------------------------
    QUOTE BUTTON — top-bar sparkle button with a continuous "rotating
    border" idle animation: a thin conic gradient ring sits directly on
    the button's own edge and spins slowly, so it reads as "something's
@@ -5926,7 +6057,7 @@ function QuoteButton({ onClick }) {
    setupMode=false: profile already exists — a single code decides
    whether this device gets write or read-only access.
 --------------------------------------------------------------- */
-function CodeGate({ onSubmitEnter, onSubmitSetup, setupMode, checking, busy, error, mode, onToggleTheme }) {
+function CodeGate({ onSubmitEnter, onSubmitSetup, setupMode, checking, busy, error }) {
   const [value, setValue] = useState("");
   const [writeVal, setWriteVal] = useState("");
   const [localError, setLocalError] = useState(null);
@@ -5959,9 +6090,6 @@ function CodeGate({ onSubmitEnter, onSubmitSetup, setupMode, checking, busy, err
       }}
     >
       <style>{FONT_IMPORT}</style>
-      <div style={{ position: "absolute", top: 16, right: 16 }}>
-        <ThemeToggle mode={mode} onToggle={onToggleTheme} />
-      </div>
       <Hex size={64} color={C.accent} glow>
         <KeyRound size={30} color={C.accent} />
       </Hex>
@@ -6000,7 +6128,7 @@ function CodeGate({ onSubmitEnter, onSubmitSetup, setupMode, checking, busy, err
             onClick={submitSetup}
             disabled={busy}
             style={{
-              width: "100%", background: C.accent, color: "#fff", borderRadius: 16, padding: "13px 0",
+              width: "100%", background: C.accent, color: "var(--on-accent)", borderRadius: 16, padding: "13px 0",
               display: "flex", alignItems: "center", justifyContent: "center", fontFamily: sans, fontWeight: 700, fontSize: 14.5,
               boxShadow: `0 0 18px ${C.glow}`, opacity: busy ? 0.7 : 1, gap: 8,
             }}
@@ -6035,7 +6163,7 @@ function CodeGate({ onSubmitEnter, onSubmitSetup, setupMode, checking, busy, err
             onClick={submitEnter}
             disabled={busy}
             style={{
-              width: "100%", background: C.accent, color: "#fff", borderRadius: 16, padding: "13px 0",
+              width: "100%", background: C.accent, color: "var(--on-accent)", borderRadius: 16, padding: "13px 0",
               display: "flex", alignItems: "center", justifyContent: "center", fontFamily: sans, fontWeight: 700, fontSize: 14.5,
               boxShadow: `0 0 18px ${C.glow}`, opacity: busy ? 0.7 : 1, gap: 8,
             }}
@@ -6423,16 +6551,15 @@ function LevelCard({ name, onNameChange, overall, totalXP, today, mode, status, 
   );
 }
 
-function TopAppBar({ syncStatus, onMenu, mode, onToggleTheme, readOnly, onQuoteClick, showQuoteButton, level = 1, onSwitchLevel, l1Archived = false, overview = false, onOverview }) {
+function TopAppBar({ syncStatus, onMenu, readOnly, onQuoteClick, showQuoteButton, level = 1, onSwitchLevel, l1Archived = false, l1Grace = false, overview = false, onOverview }) {
   return (
     <div className="flex items-center justify-between px-3" style={{ height: 60, flexShrink: 0 }}>
       <div className="flex items-center gap-1.5 pl-1.5">
         <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 16, letterSpacing: 0.5 }}>+ ULTRA</div>
-        <LevelPill level={level} onSwitch={onSwitchLevel} l1Archived={l1Archived} overview={overview} onOverview={onOverview} />
+        <LevelPill level={level} onSwitch={onSwitchLevel} l1Archived={l1Archived} l1Grace={l1Grace} overview={overview} onOverview={onOverview} />
       </div>
       <div className="flex items-center gap-2">
         {showQuoteButton && <QuoteButton onClick={onQuoteClick} />}
-        <ThemeToggle mode={mode} onToggle={onToggleTheme} />
         <Touchable onClick={onMenu} style={{ width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <MoreVertical size={18} color={C.onSurfaceVariant} />
         </Touchable>
@@ -6751,7 +6878,8 @@ const L2_DAYS = 91;
 const L2_WEEKS = 13;
 const L2_LEAVES = { mt: 6, wk: 5 };
 const L2_OVERDUE_DEDUCT = 0.5; // XP lost per day after the weekly deadline
-const L2_OVERDUE_CAP = 5;      // max XP a single penalty can ever cost
+const L2_OVERDUE_CAP = 5;
+const L2_JUNK_ALLOW = 8;       // junk-food days allowed free; each one beyond costs 1 Resolve XP      // max XP a single penalty can ever cost
 const L2_RANK_BANDS = [
   { rank: "E", from: 0, to: 20 },
   { rank: "D", from: 20, to: 60 },
@@ -6774,25 +6902,25 @@ function rankInfoL2(totalXP) {
 
 const L2_BOOKS = [
   { id: "seduction", title: "The Art of Seduction", reading: 34, bonus: 3, chapters: 24 },
-  { id: "chanakya", title: "Chanakya in You", reading: 25, bonus: 3, chapters: 20 },
+  { id: "chanakya", title: "Chanakya in You", reading: 30, bonus: 3, chapters: 60 }, // 0.5 XP a chapter
   { id: "subconscious", title: "The Power of Your Subconscious Mind", reading: 20, bonus: 3, chapters: 15 },
   { id: "money", title: "The Psychology of Money", reading: 20, bonus: 3, chapters: 20 },
 ];
 const L2_HABITS = [
-  { k: "wake", label: "Wake up by 7 AM + plan the day", xp: 0.2 },
+  { k: "wake", label: "Wake up & plan the day", xp: 0.2 },
   { k: "news", label: "Read the news", xp: 0.4 },
   { k: "skin", label: "Skincare routine", xp: 0.2 },
   { k: "hair", label: "Haircare routine", xp: 0.2 },
-  { k: "med", label: "Meditate 10 min + brush teeth at night", xp: 0.4 },
+  { k: "med", label: "Meditate 10 min & brush teeth at night", xp: 0.4 },
 ];
 const L2_LADDER = {
   1: "One-day recreational media ban",
   2: "100 push-ups + 100 crunches",
   3: "Read one extra chapter or solve one extra DSA question",
-  4: "Standalone 5 km run",
-  5: "100 push-ups + 100 crunches + 100 squats",
-  6: "Standalone 10 km run",
-  7: "100 push-ups + 100 crunches + 100 squats + 10 km run",
+  4: "100 push-ups + 100 crunches + 100 squats",
+  5: "Standalone 5 km run",
+  6: "Read one extra chapter and solve one extra DSA question + 100 push-ups + 100 crunches",
+  7: "100 push-ups + 100 crunches + 100 squats + 5 km run",
 };
 const L2_PHYSICAL = new Set([2, 4, 5, 6, 7]);
 const L2_MAX_COLOR = "#C026D3"; // level 7 ("MAX") stands apart from the red L6
@@ -6852,12 +6980,14 @@ function defaultStateL2(seed) {
     wisdom: {
       books: Object.fromEntries(L2_BOOKS.map((b) => [b.id, { chapters: b.chapters, done: 0 }])),
       dsa: {}, // { "YYYY-MM-DD": questionsSolved }
+      dsaNames: {}, // { "YYYY-MM-DD": ["Two Sum", ...] } names of the solved questions
     },
     vitality: {
       mtDays: [1, 2, 3, 4],       // planned Muay Thai weekdays (0 = Sun); never Friday
       wkDays: [1, 2, 3, 4, 5],    // planned strength-workout weekdays
       mt: {},                     // { date: "done" | "leave" | "penalty" | "deduct" }
       wk: {},
+      wkAuto: {},                 // dates whose strength workout was ticked automatically from the workout log
       events: 0,                  // treks + marathons completed
       runKm: {},                  // { weekNumber: km }
       gym,
@@ -6873,6 +7003,7 @@ function defaultStateL2(seed) {
       habits: {},                 // { date: { wake|news|skin|hair|med: "done" | "opt1" | "opt2" } }
       weekly: {},                 // { weekNumber: { laundry, iron, plants(0-2) } }
       bedsheets: [false, false, false],
+      junkFood: 0,                // junk-food count; first L2_JUNK_ALLOW are free
       bonusTasks: [],             // [{ id, title, description, completed }] — each completed task = +1 Resolve XP
       dailyLogs: {},              // kept only because the shared care toggle mirrors hair care here
     },
@@ -6894,7 +7025,98 @@ function deepFill(t, d) {
 function migrateStateL2(parsed) {
   const next = deepFill(parsed, defaultStateL2(null));
   next.level = 2;
+  // Chanakya in You has 60 chapters (it was seeded as 20). Only fix the old
+  // default; a value you've edited yourself is left alone.
+  const ch = next.wisdom?.books?.chanakya;
+  if (ch && Number(ch.chapters) === 20) ch.chapters = 60;
   return next;
+}
+
+/* Level 2: a planned strength-workout day is "done" as soon as the workout log
+   has one finished exercise. Only days it ticked itself are un-ticked again if
+   that exercise is later un-ticked; anything you marked by hand is never touched. */
+function syncStrengthFromLog(d) {
+  if (d.level !== 2 || !d.vitality?.gym?.logs) return;
+  const v = d.vitality;
+  if (!v.wk) v.wk = {};
+  if (!v.wkAuto) v.wkAuto = {};
+  const todayKey = fmtDate(new Date());
+  L2_DATES.forEach((ds) => {
+    if (ds > todayKey) return;
+    const complete = gymLogComplete(v.gym.logs[ds]);
+    if (complete && !v.wk[ds] && (v.wkDays || []).includes(parseDS(ds).getDay())) {
+      v.wk[ds] = "done";
+      v.wkAuto[ds] = true;
+    } else if (!complete && v.wkAuto[ds]) {
+      if (v.wk[ds] === "done") delete v.wk[ds];
+      delete v.wkAuto[ds];
+    }
+  });
+}
+
+/* ---------- data shared by both levels ----------
+   Diet, Planner and the Workout logger (+ its Progress) are the same in every
+   level, so they live in their own Firestore doc ("shared"). Each level doc
+   keeps only that level's quest data. In memory everything is still composed
+   into one state object (state.diet, state.planner, state.vitality.gym), so
+   every screen works unchanged. */
+const SHARED_DOC_ID = "shared";
+const jclone = (x) => JSON.parse(JSON.stringify(x));
+function sharedFromState(st) {
+  return { diet: st.diet, planner: st.planner, gym: st.vitality?.gym };
+}
+function levelOnly(st) {
+  const c = jclone(st);
+  delete c.diet;
+  delete c.planner;
+  if (c.vitality) delete c.vitality.gym;
+  return c;
+}
+function normalizeShared(raw) {
+  const m = migrateState({ diet: raw?.diet, planner: raw?.planner, vitality: { gym: raw?.gym } });
+  return { diet: m.diet, planner: m.planner, gym: m.vitality.gym };
+}
+function composeState(levelData, shared) {
+  return { ...levelData, diet: shared.diet, planner: shared.planner, vitality: { ...levelData.vitality, gym: shared.gym } };
+}
+// One-time: build the shared doc from whatever each level doc already holds.
+// Dates before Level 2 prefer Level 1's copy, Level 2's dates prefer Level 2's.
+function mergeLegacyShared(l1Raw, l2Raw) {
+  const pull = (raw) => (raw ? normalizeShared({ diet: raw.diet, planner: raw.planner, gym: raw.vitality?.gym }) : null);
+  const a = pull(l1Raw);
+  const b = pull(l2Raw);
+  if (!a && !b) return normalizeShared({});
+  if (!a) return b;
+  if (!b) return a;
+  const cut = fmtDate(L2_START);
+  const byDate = (oa, ob) => {
+    const out = {};
+    new Set([...Object.keys(oa || {}), ...Object.keys(ob || {})]).forEach((k) => {
+      const order = k >= cut ? [ob, oa] : [oa, ob];
+      out[k] = order[0]?.[k] !== undefined ? order[0][k] : order[1][k];
+    });
+    return out;
+  };
+  const byId = (la, lb) => {
+    const out = [];
+    const seen = new Set();
+    [...(lb || []), ...(la || [])].forEach((x) => { if (x && !seen.has(x.id)) { seen.add(x.id); out.push(x); } });
+    return out;
+  };
+  const schedules = byId(a.gym.schedules, b.gym.schedules);
+  let activeSeen = false;
+  schedules.forEach((sc) => { if (sc.active) { if (activeSeen) sc.active = false; activeSeen = true; } });
+  return {
+    diet: { ...a.diet, ...b.diet, plans: byId(a.diet.plans, b.diet.plans), logs: byDate(a.diet.logs, b.diet.logs) },
+    planner: { ...a.planner, ...b.planner, days: byDate(a.planner.days, b.planner.days), unlisted: byId(a.planner.unlisted, b.planner.unlisted) },
+    gym: {
+      ...a.gym, ...b.gym,
+      exercises: byId(a.gym.exercises, b.gym.exercises),
+      schedules,
+      catchups: byId(a.gym.catchups, b.gym.catchups),
+      logs: byDate(a.gym.logs, b.gym.logs),
+    },
+  };
 }
 
 /* ---------- scoring ---------- */
@@ -6938,7 +7160,7 @@ function deriveL2Penalties(s, today) {
     });
   };
   Object.entries(s.vitality.mt || {}).forEach(([ds, st]) => { if (st === "penalty") add(`mt-${ds}`, `Missed Muay Thai · ${fmtShort(ds)}`, 7, ds, "vitality", "Muay Thai"); });
-  Object.entries(s.vitality.wk || {}).forEach(([ds, st]) => { if (st === "penalty") add(`wk-${ds}`, `Missed workout · ${fmtShort(ds)}`, 5, ds, "vitality", "Workout"); });
+  Object.entries(s.vitality.wk || {}).forEach(([ds, st]) => { if (st === "penalty") add(`wk-${ds}`, `Missed workout · ${fmtShort(ds)}`, 4, ds, "vitality", "Workout"); });
   Object.entries(s.resolve.habits || {}).forEach(([ds, hs]) => {
     L2_HABITS.forEach((h) => {
       if (hs?.[h.k] === "opt1") add(`h1-${ds}-${h.k}`, `Missed: ${h.label} · ${fmtShort(ds)}`, 1, ds, "resolve", "Resolve habit");
@@ -6997,7 +7219,8 @@ function computeL2(s, today) {
     (a, x) => a + (x.laundry ? 1 : 0) + (x.iron ? 0.5 : 0) + (clamp(Number(x.plants) || 0, 0, 2)) * 0.25, 0);
   const rMonth = s.resolve.bedsheets.filter(Boolean).length;
   const bonusXP = (s.resolve.bonusTasks || []).filter((t) => t.completed).length;
-  const r = r2(rHab + rWeek + rMonth + bonusXP - ded.resolve);
+  const junkOver = Math.max(0, (Number(s.resolve.junkFood) || 0) - L2_JUNK_ALLOW);
+  const r = r2(rHab + rWeek + rMonth + bonusXP - junkOver - ded.resolve);
 
   const total = w + v + we + r;
   const pct = (Math.max(0, total) / 400) * 100;
@@ -7005,7 +7228,7 @@ function computeL2(s, today) {
   const dayLabel = idxRaw < 1 ? `Starts ${fmtDM(L2_DATES[0])}` : idxRaw > L2_DAYS ? `${LEVEL_NAMES[2]} complete` : `Day ${idxRaw} / ${L2_DAYS}`;
   return {
     todayKey, idxRaw, w, v, we, r, total, pct, displayPct: Math.min(120, pct), penalties, pending, ded, dayLabel,
-    parts: { books, dsaTotal, dsaXP, mtXP, wkXP, runXP, evXP, bonusXP },
+    parts: { books, dsaTotal, dsaXP, mtXP, wkXP, runXP, evXP, bonusXP, junkOver },
   };
 }
 
@@ -7128,7 +7351,7 @@ function L2AttendanceGrid({ kind, s, set, today }) {
   const days = kind === "mt" ? v.mtDays : v.wkDays;
   const leaveAllow = L2_LEAVES[kind];
   const leavesUsed = Object.values(map).filter((x) => x === "leave").length;
-  const penLevel = kind === "mt" ? 7 : 5;
+  const penLevel = kind === "mt" ? 7 : 4;
   const todayKey = fmtDate(today);
   const curWeek = clamp(Math.ceil(l2DayIndex(today) / 7), 1, L2_WEEKS);
   const [openW, setOpenW] = useState(curWeek);
@@ -7305,6 +7528,85 @@ function l2WeekDots(s, w) {
   return { resolve: l2DotLevel(rDone, 3), vitality: l2DotLevel(vDone, vTotal) };
 }
 
+/* DSA log for one day: every solved question is recorded by name. The solved
+   count (wisdom.dsa[date]) is what scores; wisdom.dsaNames[date] holds the
+   names. Any older unnamed solves show as one "unnamed" row so nothing is lost. */
+function DsaLog({ date, s, set, color, compact = false }) {
+  const readOnly = useContext(ReadOnlyContext);
+  const [name, setName] = useState("");
+  const count = Number(s.wisdom.dsa?.[date]) || 0;
+  const names = (s.wisdom.dsaNames?.[date] || []).slice(0, count);
+  const unnamed = Math.max(0, count - names.length);
+  const target = dsaTarget(date);
+  const add = () => {
+    const n = name.trim();
+    if (!n || readOnly) return;
+    set((d) => {
+      if (!d.wisdom.dsaNames) d.wisdom.dsaNames = {};
+      const have = Number(d.wisdom.dsa[date]) || 0;
+      const list = (d.wisdom.dsaNames[date] || []).slice(0, have);
+      list.push(n);
+      d.wisdom.dsaNames[date] = list;
+      d.wisdom.dsa[date] = have + 1;
+    });
+    setName("");
+  };
+  const removeNamed = (i) => set((d) => {
+    const list = d.wisdom.dsaNames?.[date] || [];
+    list.splice(i, 1);
+    if (list.length) d.wisdom.dsaNames[date] = list; else if (d.wisdom.dsaNames) delete d.wisdom.dsaNames[date];
+    const left = Math.max(0, (Number(d.wisdom.dsa[date]) || 0) - 1);
+    if (left) d.wisdom.dsa[date] = left; else delete d.wisdom.dsa[date];
+  });
+  const removeUnnamed = () => set((d) => {
+    const left = Math.max(0, (Number(d.wisdom.dsa[date]) || 0) - 1);
+    if (left) d.wisdom.dsa[date] = left; else delete d.wisdom.dsa[date];
+  });
+  const row = (key, text, onRemove, faint) => (
+    <div key={key} className="flex items-center gap-2" style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 10, padding: "6px 10px" }}>
+      <Check size={13} color={color} />
+      <span style={{ flex: 1, minWidth: 0, color: faint ? C.faint : C.onSurface, fontSize: 13, fontStyle: faint ? "italic" : "normal", overflowWrap: "anywhere" }}>{text}</span>
+      {!readOnly && (
+        <Touchable onClick={onRemove} style={{ padding: 4 }}>
+          <X size={13} color={C.faint} />
+        </Touchable>
+      )}
+    </div>
+  );
+  return (
+    <div>
+      {!compact && (
+        <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+          <span style={{ color: C.onSurface, fontSize: 13 }}>Solved <span style={{ fontFamily: mono, color: C.faint }}>· target {target}</span></span>
+          <span style={{ fontFamily: mono, fontSize: 13, color: count >= target ? color : C.onSurfaceVariant }}>{count} / {target}</span>
+        </div>
+      )}
+      <div className="flex flex-col gap-1.5">
+        {names.map((n, i) => row(`n${i}`, n, () => removeNamed(i), false))}
+        {unnamed > 0 && row("unnamed", `${unnamed} earlier question${unnamed === 1 ? "" : "s"} (no name)`, removeUnnamed, true)}
+      </div>
+      {!readOnly && (
+        <div className="flex items-center gap-2" style={{ marginTop: names.length || unnamed ? 8 : 0 }}>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") add(); }}
+            placeholder="Question name (e.g. Two Sum)"
+            style={{ flex: 1, minWidth: 0, background: C.container, border: `1px solid ${C.outline}`, outline: "none", color: C.onSurface, fontSize: 13, borderRadius: 10, padding: "8px 10px" }}
+          />
+          <Touchable
+            onClick={add}
+            disabled={!name.trim()}
+            style={{ flexShrink: 0, borderRadius: 10, padding: "8px 14px", background: name.trim() ? color : C.containerHigh, border: `1px solid ${name.trim() ? color : C.outlineVariant}` }}
+          >
+            <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 12.5, color: name.trim() ? C.surface : C.faint }}>Add</span>
+          </Touchable>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function L2CalendarDayDetail({ date, s, set }) {
   const state = s;
   const readOnly = useContext(ReadOnlyContext);
@@ -7346,99 +7648,13 @@ function L2CalendarDayDetail({ date, s, set }) {
         <span style={{ fontFamily: mono, color: C.faint, fontSize: 11 }}>Day {clamp(idx, 1, L2_DAYS)} · Week {weekNum}</span>
       </div>
 
-            <Mission
-        title="Diet"
-        rightLabel={`${Math.round(dietConsumedProtein)} / ${Math.round(dietTotalProtein)}g`}
-        color={C.accent}
-        defaultOpen
-      >
-        {plans.length === 0 ? (
-          <p style={{ color: C.faint, fontSize: 12.5 }}>No diets created yet — add one from the Diet tab.</p>
-        ) : !activePlan || picking ? (
-          <div className="flex flex-col gap-2">
-            <p style={{ color: C.onSurfaceVariant, fontSize: 12 }}>Which diet was this?</p>
-            {plans.map((p) => (
-              <Touchable
-                key={p.id}
-                writeAction
-                onClick={() => {
-                  set((dr) => {
-                    if (!dr.diet.logs[date]) dr.diet.logs[date] = { planId: null, completed: {}, extras: [] };
-                    dr.diet.logs[date].planId = p.id;
-                    dr.diet.logs[date].completed = {};
-                  });
-                  setPicking(false);
-                }}
-                style={{
-                  background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 10,
-                  padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between",
-                }}
-              >
-                <span style={{ color: C.onSurface, fontFamily: sans, fontSize: 13.5, fontWeight: 600 }}>{p.name}</span>
-                <span style={{ color: C.faint, fontFamily: mono, fontSize: 11.5 }}>{p.items.length} items</span>
-              </Touchable>
-            ))}
-            {activePlan && (
-              <Touchable onClick={() => setPicking(false)} style={{ alignSelf: "flex-end", padding: "4px 2px" }}>
-                <span style={{ color: C.onSurfaceVariant, fontFamily: sans, fontSize: 12 }}>Cancel</span>
-              </Touchable>
-            )}
-          </div>
-        ) : (
-          <div>
-            <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
-              <span style={{ color: C.onSurface, fontFamily: sans, fontSize: 13.5, fontWeight: 700 }}>{activePlan.name}</span>
-              {!readOnly && (
-                <Touchable onClick={() => setPicking(true)}>
-                  <span style={{ color: C.accent, fontFamily: sans, fontSize: 12, fontWeight: 600 }}>Change</span>
-                </Touchable>
-              )}
-            </div>
-            {activePlan.items.length === 0 ? (
-              <p style={{ color: C.faint, fontSize: 12.5 }}>This diet has no items yet.</p>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {activePlan.items.map((item) => {
-                  const checked = !!dlog.completed?.[item.id];
-                  return (
-                    <div
-                      key={item.id}
-                      style={{ background: C.containerHigh, border: `1px solid ${C.outlineVariant}`, borderRadius: 12, padding: "8px 12px" }}
-                      className="flex items-center gap-2"
-                    >
-                      <Check2
-                        checked={checked}
-                        color={C.accent}
-                        onClick={() => set((dr) => {
-                          if (!dr.diet.logs[date]) dr.diet.logs[date] = { planId: activePlan.id, completed: {}, extras: [] };
-                          dr.diet.logs[date].completed[item.id] = !dr.diet.logs[date].completed[item.id];
-                        })}
-                      />
-                      <span
-                        style={{
-                          flex: 1, color: checked ? C.faint : C.onSurface, fontFamily: sans, fontSize: 13.5,
-                          textDecoration: checked ? "line-through" : "none",
-                        }}
-                      >
-                        {item.name}
-                      </span>
-                      <span style={{ color: C.faint, fontFamily: mono, fontSize: 11.5 }}>{item.protein}g</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        <DietExtras date={date} log={dlog} set={set} />
-      </Mission>
+            <SharedScope><CalendarDietMission date={date} state={state} set={set} /></SharedScope>
 
       <Mission title="Wisdom" rightLabel={`${solved} / ${target} DSA`} color={C.wisdom}>
-        <div className="flex items-center justify-between">
+        <div style={{ marginBottom: 8 }}>
           <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>DSA questions solved <span style={{ fontFamily: mono, color: C.faint }}>· target {target}</span></span>
-          <Counter value={solved} max={30} color={C.wisdom} onChange={(n) => set((d) => { if (n) d.wisdom.dsa[date] = n; else delete d.wisdom.dsa[date]; })} />
         </div>
+        <DsaLog date={date} s={s} set={set} color={C.wisdom} compact />
       </Mission>
 
       <Mission title="Vitality" rightLabel={vitRows.length ? `${vitDone} / ${vitRows.length}` : "rest day"} color={C.vitality}>
@@ -7475,7 +7691,7 @@ function L2CalendarDayDetail({ date, s, set }) {
       </Mission>
 
             <Mission title="Skin & hair" rightLabel={`${cc.am + cc.pm + cc.hDay + cc.hNight}/${CARE_SKIN_TOTAL + CARE_HAIR_TOTAL}`} color={C.accent}>
-          {[["SKIN · MORNING", "skin", SKIN_AM_STEPS], ["SKIN · NIGHT", "skin", SKIN_PM_STEPS], ["HAIR · DAY", "hair", HAIR_DAY_STEPS], ["HAIR · NIGHT", "hair", HAIR_NIGHT_STEPS]].map(([title, group, steps]) => (
+          {[["SKIN · MORNING", "skin", SKIN_AM_SHOWN], ["SKIN · NIGHT", "skin", SKIN_PM_STEPS], ["HAIR · DAY", "hair", HAIR_DAY_STEPS], ["HAIR · NIGHT", "hair", HAIR_NIGHT_STEPS]].map(([title, group, steps]) => (
             <div key={title}>
               <div style={{ fontFamily: mono, fontSize: 10, color: C.faint, letterSpacing: 0.5, marginTop: 6 }}>{title}</div>
               {steps.map(([k, lbl]) => (
@@ -7487,6 +7703,7 @@ function L2CalendarDayDetail({ date, s, set }) {
             </div>
           ))}
         </Mission>
+      <CalendarSharedExtras date={date} state={state} set={set} />
     </div>
   );
 }
@@ -7544,176 +7761,6 @@ function L2CalendarWeekCard({ w, s, set }) {
 
       {head("WISDOM")}
       {line("DSA questions", `${weekSolved} / 9`, weekSolved >= 9)}
-    </div>
-  );
-}
-
-function L2CalendarTab({ s, set, today }) {
-  const todayKey = fmtDate(today);
-  const startDay = l2ClampDay(today);
-  const [monthIdx, setMonthIdx] = useState(() => {
-    const sd = parseDS(startDay);
-    const i = L2_CAL_MONTHS.findIndex((m) => sd.getFullYear() === m.year && sd.getMonth() === m.month);
-    return i >= 0 ? i : 0;
-  });
-  const [selected, setSelected] = useState(startDay);
-  const [selectedWeek, setSelectedWeek] = useState(() => l2WeekOf(startDay));
-  const [view, setView] = useState("daily");
-
-  const { label: monthLabel, year, month } = L2_CAL_MONTHS[monthIdx];
-  const startWeekday = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const cells = [];
-  for (let i = 0; i < startWeekday; i++) cells.push(null);
-  for (let day = 1; day <= daysInMonth; day++) cells.push(new Date(year, month, day));
-  const selInRange = L2_DATE_SET.has(selected);
-  const navBtn = (dir, disabled) => (
-    <Touchable
-      onClick={() => setMonthIdx((m) => clamp(m + dir, 0, L2_CAL_MONTHS.length - 1))}
-      style={{ width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", opacity: disabled ? 0.3 : 1, pointerEvents: disabled ? "none" : "auto" }}
-    >
-      {dir < 0 ? <ChevronLeft size={18} color={C.onSurfaceVariant} /> : <ChevronRight size={18} color={C.onSurfaceVariant} />}
-    </Touchable>
-  );
-
-  return (
-    <div className="pb-4">
-      <div className="px-4 pt-5 pb-4 flex items-center gap-2">
-        <Diamond size={7} color={C.accent} glow />
-        <div style={{ fontFamily: sans, fontWeight: 900, color: C.onSurface, fontSize: 22, letterSpacing: 0.3 }}>CALENDAR</div>
-      </div>
-
-      <div className="mx-4 mb-4 flex items-center" style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 12, padding: 3 }}>
-        {[{ id: "daily", label: "Daily" }, { id: "weekly", label: "Weekly" }].map((vw) => {
-          const active = view === vw.id;
-          return (
-            <Touchable
-              key={vw.id}
-              onClick={() => setView(vw.id)}
-              style={{ flex: 1, textAlign: "center", padding: "8px 0", borderRadius: 9, background: active ? mix(C.accent, 20) : "transparent" }}
-            >
-              <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 13, color: active ? C.accent : C.onSurfaceVariant }}>{vw.label}</span>
-            </Touchable>
-          );
-        })}
-      </div>
-
-      {view === "daily" && (
-        <>
-          <div className="mx-4 mb-3 flex items-center justify-between">
-            {navBtn(-1, monthIdx === 0)}
-            <span style={{ fontFamily: sans, fontWeight: 700, color: C.onSurface, fontSize: 15 }}>{monthLabel} {year}</span>
-            {navBtn(1, monthIdx === L2_CAL_MONTHS.length - 1)}
-          </div>
-
-          <div className="mx-4 mb-2 flex items-center justify-center gap-3 flex-wrap">
-            <div className="flex items-center gap-1.5">
-              <span style={{ fontFamily: mono, fontSize: 10, fontWeight: 700, color: C.accent }}>42g</span>
-              <span style={{ fontFamily: sans, fontSize: 10.5, color: C.onSurfaceVariant }}>Protein</span>
-            </div>
-            <LegendDot color={C.wisdom} label="Wisdom" />
-            <LegendDot color={C.vitality} label="Vitality" />
-            <LegendDot color={C.resolve} label="Resolve" />
-            <LegendDot color={C.accent} label="Care" />
-          </div>
-
-          <div className="mx-4" style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 16, padding: 12 }}>
-            <div className="grid grid-cols-7 gap-1 mb-1">
-              {WEEKDAY_LETTERS.map((wl, i) => (
-                <div key={i} style={{ textAlign: "center", fontFamily: mono, fontSize: 9.5, color: C.faint }}>{wl}</div>
-              ))}
-            </div>
-            <div className="grid grid-cols-7 gap-1">
-              {cells.map((d, i) => {
-                if (!d) return <div key={i} />;
-                const ds = fmtDate(d);
-                const status = l2CalDayStatus(s, ds);
-                const inRange = L2_DATE_SET.has(ds);
-                const isToday = todayKey === ds;
-                const isSel = selected === ds;
-                return (
-                  <Touchable
-                    key={i}
-                    onClick={() => { if (inRange) setSelected(ds); }}
-                    style={{
-                      aspectRatio: "1", borderRadius: 10,
-                      background: isSel ? mix(C.accent, 18) : "transparent",
-                      border: isToday ? `1px solid ${C.accent}` : "1px solid transparent",
-                      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
-                      opacity: inRange ? 1 : 0.28, pointerEvents: inRange ? "auto" : "none",
-                    }}
-                  >
-                    <span style={{ fontFamily: mono, fontSize: 11, color: isSel ? C.accent : C.onSurface, fontWeight: isToday ? 800 : 500 }}>{d.getDate()}</span>
-                    <span style={{ fontFamily: mono, fontSize: 8, lineHeight: "9px", fontWeight: 700, color: status?.dietGrams ? C.accent : "transparent" }}>
-                      {status?.dietGrams ? `${Math.round(status.dietGrams)}g` : "0g"}
-                    </span>
-                    <div className="flex items-center gap-[2px]">
-                      <StatusDot frac={status?.wisdomFrac} color={C.wisdom} />
-                      <StatusDot frac={status?.vitalityFrac} color={C.vitality} />
-                      <StatusDot frac={status?.resolveFrac} color={C.resolve} />
-                      <StatusDot frac={status?.careFrac} color={C.accent} />
-                    </div>
-                  </Touchable>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="pt-4">
-            <CalendarDropdown
-              label={selInRange ? `Day details — ${parseDS(selected).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : "Day details"}
-              color={C.accent}
-            >
-              {!selInRange ? (
-                <p style={{ color: C.faint, fontSize: 12.5, padding: "0 16px 12px" }}>Outside {LEVEL_NAMES[2]} (1 Nov 2026 – 30 Jan 2027).</p>
-              ) : (
-                <L2CalendarDayDetail date={selected} s={s} set={set} />
-              )}
-            </CalendarDropdown>
-          </div>
-        </>
-      )}
-
-      {view === "weekly" && (
-        <div>
-          <div className="mx-4 mb-2 flex items-center justify-center gap-4">
-            <LegendDot color={C.vitality} label="Vitality" />
-            <LegendDot color={C.resolve} label="Resolve" />
-          </div>
-          <div className="mx-4" style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 16, padding: 12 }}>
-            <div className="grid grid-cols-7 gap-1">
-              {Array.from({ length: L2_WEEKS }, (_, i) => i + 1).map((wn) => {
-                const dots = l2WeekDots(s, wn);
-                const active = selectedWeek === wn;
-                return (
-                  <Touchable
-                    key={wn}
-                    onClick={() => setSelectedWeek(wn)}
-                    style={{
-                      aspectRatio: "1", borderRadius: 10,
-                      background: active ? mix(C.resolve, 18) : "transparent",
-                      border: active ? `1px solid ${C.resolve}` : "1px solid transparent",
-                      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3,
-                    }}
-                  >
-                    <span style={{ fontFamily: mono, fontSize: 11, color: active ? C.resolve : C.onSurface, fontWeight: active ? 800 : 500 }}>W{wn}</span>
-                    <div className="flex items-center gap-[3px]">
-                      <DualDot done={dots.vitality} color={C.vitality} />
-                      <DualDot done={dots.resolve} color={C.resolve} />
-                    </div>
-                  </Touchable>
-                );
-              })}
-              {Array.from({ length: (7 - (L2_WEEKS % 7)) % 7 }, (_, i) => <div key={`pad-${i}`} />)}
-            </div>
-          </div>
-          <div className="pt-3">
-            <CalendarDropdown label={`Week ${selectedWeek} details`} color={C.resolve}>
-              <L2CalendarWeekCard w={selectedWeek} s={s} set={set} />
-            </CalendarDropdown>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -7922,12 +7969,12 @@ function L2HomeTab({ cx, s, set, today, setTab, setCareOpen }) {
         </div>
       )}
       {inRange && (
-        <div className="flex items-center justify-between" style={{ background: C.containerHigh, border: `1px solid ${solved >= target ? mix(C.wisdom, 40) : C.outlineVariant}`, borderLeft: `3px solid ${solved >= target ? C.wisdom : C.outlineVariant}`, borderRadius: 12, padding: "8px 12px", marginBottom: 10 }}>
-          <div>
+        <div style={{ background: C.containerHigh, border: `1px solid ${solved >= target ? mix(C.wisdom, 40) : C.outlineVariant}`, borderLeft: `3px solid ${solved >= target ? C.wisdom : C.outlineVariant}`, borderRadius: 12, padding: "8px 12px", marginBottom: 10 }}>
+          <div style={{ marginBottom: 8 }}>
             <div style={{ color: C.onSurface, fontSize: 13 }}>DSA questions</div>
             <div style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>{solved} / {target} today · every 3 solved = 1 XP</div>
           </div>
-          <Counter value={solved} max={30} color={C.wisdom} onChange={(n) => set((d) => { if (n) d.wisdom.dsa[ds] = n; else delete d.wisdom.dsa[ds]; })} />
+          <DsaLog date={ds} s={s} set={set} color={C.wisdom} compact />
         </div>
       )}
       <QuestBarL2 s={s} set={set} today={today} cx={cx} onOpenCare={(w) => { setCareOpen(w); setTab("resolve"); }} />
@@ -8005,9 +8052,8 @@ function L2WisdomTab({ cx, s, set, today }) {
           Weekdays 1 question, weekends 2 (9 a week). Every 3 solved = 1 XP; extras count too.
         </p>
         <L2DayNav ds={ds} setDs={setDs} />
-        <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
-          <span style={{ color: C.onSurface, fontSize: 13 }}>Solved <span style={{ fontFamily: mono, color: C.faint }}>· target {target}</span></span>
-          <Counter value={solved} max={30} color={color} onChange={(n) => set((d) => { if (n) d.wisdom.dsa[ds] = n; else delete d.wisdom.dsa[ds]; })} />
+        <div style={{ marginBottom: 10 }}>
+          <DsaLog date={ds} s={s} set={set} color={color} />
         </div>
         <div style={{ fontFamily: mono, fontSize: 11, color: C.onSurfaceVariant, marginBottom: 6 }}>
           Total {cx.parts.dsaTotal} solved · {cx.parts.dsaTotal % 3} toward the next XP · baseline 117
@@ -8038,7 +8084,7 @@ function L2VitalityTab({ cx, s, set, today, onOpenProgress }) {
     <div className="pb-4">
       <ScreenHeader title="Vitality" sub="Muay Thai, strength, running and events." color={color} score={cx.v} />
       <VitalityOverviewTiles s={v} eff={{ treks: Number(v.events) || 0 }} onOpenProgress={onOpenProgress} ringMax={8} ringLabel="EVENTS" />
-      <WorkoutCard s={v} set={set} locked={false} />
+      <SharedScope><WorkoutCard s={v} set={set} locked={false} /></SharedScope>
       <Mission title="Muay Thai" points={v.mtDays.length * L2_WEEKS} earned={cx.parts.mtXP} color={color}>
         <L2AttendanceGrid kind="mt" s={s} set={set} today={today} />
       </Mission>
@@ -8054,7 +8100,7 @@ function L2VitalityTab({ cx, s, set, today, onOpenProgress }) {
       </Mission>
       <Mission title="Running" points={26} earned={cx.parts.runXP} color={color}>
         <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 8 }}>
-          10 km minimum per week; every complete 5 km = 1 XP. Marathon distances don't count. Under 10 km after the week ends triggers L6.
+          10 km minimum per week; every complete 5 km = 1 XP. Marathon distances don't count. Under 10 km after the week ends triggers L6 (extra chapter and DSA question + 100 push-ups + 100 crunches).
         </p>
         {Array.from({ length: L2_WEEKS }, (_, i) => i + 1).map((w) => {
           const km = weekRun(w);
@@ -8201,8 +8247,41 @@ function L2ResolveTab({ cx, s, set, today, careOpen, setCareOpen }) {
           </label>
         ))}
       </Mission>
+      <L2AllowancesMission s={s} set={set} cx={cx} />
       <BonusTasksMission s={s.resolve} set={set} />
     </div>
+  );
+}
+
+/* Allowances: junk food (counter) plus the Muay Thai and strength-workout
+   leaves, which are used from Vitality and shown here as used / allowed. */
+function L2AllowancesMission({ s, set, cx }) {
+  const color = C.resolve;
+  const used = (m) => Object.values(m || {}).filter((x) => x === "leave").length;
+  const junk = Number(s.resolve.junkFood) || 0;
+  const rows = [
+    { label: "Muay Thai leaves", n: used(s.vitality.mt), allow: L2_LEAVES.mt },
+    { label: "Strength workout leaves", n: used(s.vitality.wk), allow: L2_LEAVES.wk },
+  ];
+  return (
+    <Mission title="Allowances" rightLabel={cx.parts.junkOver ? `−${cx.parts.junkOver} XP` : "within limits"} color={color}>
+      <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
+        <div>
+          <div style={{ color: C.onSurface, fontSize: 13 }}>Junk food</div>
+          <div style={{ fontFamily: mono, fontSize: 10, color: junk > L2_JUNK_ALLOW ? C.danger : C.faint }}>
+            {junk} / {L2_JUNK_ALLOW} allowed · each extra −1 XP
+          </div>
+        </div>
+        <Counter value={junk} max={99} color={color} onChange={(n) => set((d) => { d.resolve.junkFood = n; })} />
+      </div>
+      {rows.map((r) => (
+        <div key={r.label} className="flex items-center justify-between" style={{ marginBottom: 6 }}>
+          <span style={{ color: C.onSurfaceVariant, fontSize: 13 }}>{r.label}</span>
+          <span style={{ fontFamily: mono, fontSize: 12, color: r.n >= r.allow ? C.accent : C.onSurfaceVariant }}>{r.n} / {r.allow} used</span>
+        </div>
+      ))}
+      <p style={{ fontFamily: mono, fontSize: 10, color: C.faint, marginTop: 4 }}>Leaves are used from Vitality (tap a planned day, then "Use a leave").</p>
+    </Mission>
   );
 }
 
@@ -8306,7 +8385,7 @@ function L2PenaltiesTab({ cx, s, set, today }) {
         <div style={{ fontFamily: sans, fontWeight: 700, fontSize: 11.5, color: C.faint, letterSpacing: 0.4, margin: "14px 0 6px" }}>LOG A PENALTY</div>
         <div className="flex gap-2" style={{ marginBottom: 12 }}>
           <div style={{ flex: 1 }}><L2Btn color={C.danger} onClick={() => addManual("Low protein intake", 2)}>Low protein · L2</L2Btn></div>
-          <div style={{ flex: 1 }}><L2Btn color={C.danger} onClick={() => addManual("Diet cheat / violation", 5)}>Diet violation · L5</L2Btn></div>
+          <div style={{ flex: 1 }}><L2Btn color={C.danger} onClick={() => addManual("Diet cheat / violation", 4)}>Diet violation · L4</L2Btn></div>
         </div>
       </div>
       <Mission title="Penalty ladder" rightLabel="L1 – MAX" color={C.danger} defaultOpen>
@@ -8332,7 +8411,6 @@ function Level2Tabs({ tab, cx, s, set, today, setTab, careOpen, setCareOpen }) {
   if (tab === "wealth") return <L2WealthTab cx={cx} s={s} set={set} />;
   if (tab === "resolve") return <L2ResolveTab cx={cx} s={s} set={set} today={today} careOpen={careOpen} setCareOpen={setCareOpen} />;
   if (tab === "penalties") return <L2PenaltiesTab cx={cx} s={s} set={set} today={today} />;
-  if (tab === "calendar") return <L2CalendarTab s={s} set={set} today={today} />;
   return null;
 }
 
@@ -8521,11 +8599,11 @@ function AllLevelsOverview({ levels, level, name, onOpen }) {
   );
 }
 
-function LevelPill({ level, onSwitch, l1Archived, overview = false, onOverview }) {
+function LevelPill({ level, onSwitch, l1Archived, l1Grace = false, overview = false, onOverview }) {
   const [open, setOpen] = useState(false);
   const started2 = l2DayIndex(new Date()) >= 1;
   const opts = [
-    { n: 1, range: "2 Aug – 31 Oct 2026", chip: l1Archived ? "ARCHIVED · VIEW ONLY" : "ACTIVE" },
+    { n: 1, range: "2 Aug – 31 Oct 2026", chip: l1Archived ? "ARCHIVED · VIEW ONLY" : l1Grace ? "ENDED · EDITS TO 5 NOV" : "ACTIVE" },
     { n: 2, range: "1 Nov 2026 – 30 Jan 2027", chip: started2 ? "ACTIVE" : "UPCOMING" },
   ];
   return (
@@ -8573,9 +8651,7 @@ export default function LifeRPG() {
   const [code, setCode] = useState(() =>
     typeof window !== "undefined" ? localStorage.getItem(CODE_STORAGE_KEY) : null
   );
-  const [mode, setMode] = useState(() =>
-    (typeof window !== "undefined" && localStorage.getItem(THEME_STORAGE_KEY)) || "dark"
-  );
+  const mode = "dark"; // dark-only app
   const [state, setState] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("dashboard");
@@ -8592,8 +8668,9 @@ export default function LifeRPG() {
   const [codeCopied, setCodeCopied] = useState(false);
   const [readOnly, setReadOnly] = useState(false);
   // Which level is on screen. Level 1 lives in the "main" doc and is never
-  // modified by Level 2; Level 2 has its own doc. Level 1 becomes view-only
-  // automatically once it has ended (after 31 Oct 2026).
+  // modified by Level 2; Level 2 has its own doc. Level 1 ended on 31 Oct 2026
+  // but stays editable (old dates only) for L1_GRACE_DAYS more days, and then
+  // becomes view-only automatically.
   const [level, setLevel] = useState(() => {
     try {
       const v = typeof window !== "undefined" ? localStorage.getItem(LEVEL_STORAGE_KEY) : null;
@@ -8603,7 +8680,9 @@ export default function LifeRPG() {
   });
   const [overview, setOverview] = useState(false);       // "Overall Progress" page open
   const [otherSummary, setOtherSummary] = useState(null);  // summary of the level that is NOT on screen (null = loading)
-  const l1Archived = level === 1 && dayIndex(new Date()) > TOTAL_DAYS;
+  const l1Archived = level === 1 && dayIndex(new Date()) > TOTAL_DAYS + L1_GRACE_DAYS;
+  // Quest ended but still inside the grace window: old dates can still change.
+  const l1Grace = level === 1 && !l1Archived && dayIndex(new Date()) > TOTAL_DAYS;
   const viewOnly = readOnly || l1Archived;
 
   // authConfig: undefined = still checking, null = no profile exists yet,
@@ -8644,14 +8723,16 @@ export default function LifeRPG() {
 
   const dirtyRef = useRef(false);
   useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
-
-  const toggleTheme = useCallback(() => {
-    setMode((m) => {
-      const next = m === "dark" ? "light" : "dark";
-      if (typeof window !== "undefined") localStorage.setItem(THEME_STORAGE_KEY, next);
-      return next;
-    });
-  }, []);
+  // What the server last gave us for this level / the shared doc. Saving only
+  // writes a doc whose part of the state actually changed, so editing quest
+  // data on one device can't overwrite diet/planner/workout edits from another.
+  const levelBaseRef = useRef("");
+  const sharedBaseRef = useRef("");
+  // The OTHER level's quest data, loaded only while the Calendar is open so
+  // each date can show its own level's items. Edits are saved with Save.
+  const [otherData, setOtherData] = useState(null);
+  const otherDirtyRef = useRef(false);
+  const stateRef = useRef(null);
 
   // There is exactly one profile, ever. This listens for whether it exists
   // yet and, once it does, for its (hashed) write/read codes — so codes
@@ -8732,17 +8813,50 @@ export default function LifeRPG() {
     }
     let cancelled = false;
     const ref = doc(db, QUESTS_COLLECTION, level === 2 ? L2_DOC_ID : MAIN_DOC_ID);
-    const unsub = onSnapshot(
+    const sharedRef = doc(db, QUESTS_COLLECTION, SHARED_DOC_ID);
+    let levelData; // this level's migrated doc (undefined until it arrives)
+    let sharedData; // the shared doc, normalised (undefined until it arrives)
+    const publish = () => {
+      if (cancelled || levelData === undefined || sharedData === undefined) return;
+      if (!dirtyRef.current) {
+        const next = composeState(levelData, sharedData);
+        levelBaseRef.current = JSON.stringify(levelOnly(next));
+        sharedBaseRef.current = JSON.stringify(sharedFromState(next));
+        setState(next);
+      }
+      setLoaded(true);
+      setSyncStatus("synced");
+    };
+    const unsubShared = onSnapshot(
+      sharedRef,
+      async (snap) => {
+        if (cancelled) return;
+        if (snap.exists()) {
+          sharedData = normalizeShared(snap.data());
+        } else {
+          // First run with the shared doc: build it from both levels' existing data.
+          let l1Raw = null;
+          let l2Raw = null;
+          try { const d1 = await getDoc(doc(db, QUESTS_COLLECTION, MAIN_DOC_ID)); if (d1.exists()) l1Raw = d1.data(); } catch {}
+          try { const d2 = await getDoc(doc(db, QUESTS_COLLECTION, L2_DOC_ID)); if (d2.exists()) l2Raw = d2.data(); } catch {}
+          if (cancelled) return;
+          sharedData = mergeLegacyShared(l1Raw, l2Raw);
+          if (!readOnly) { try { await setDoc(sharedRef, sharedData); } catch {} }
+        }
+        publish();
+      },
+      () => { if (!cancelled) { setSyncStatus("error"); setLoaded(true); } }
+    );
+    const unsubLevel = onSnapshot(
       ref,
       async (snap) => {
         if (cancelled) return;
         if (snap.exists()) {
-          if (!dirtyRef.current) setState(level === 2 ? migrateStateL2(snap.data()) : migrateState(snap.data()));
+          levelData = level === 2 ? migrateStateL2(snap.data()) : migrateState(snap.data());
         } else if (!readOnly) {
           let initial;
           if (level === 2) {
-            // First time Level 2 opens: copy (never move) your workout library,
-            // diet plans and future planner tasks from Level 1.
+            // First time Level 2 opens: copy (never move) your profile from Level 1.
             let seed = null;
             try {
               const s1 = await getDoc(doc(db, QUESTS_COLLECTION, MAIN_DOC_ID));
@@ -8753,17 +8867,16 @@ export default function LifeRPG() {
             initial = defaultState();
           }
           if (cancelled) return;
-          try { await setDoc(ref, initial); } catch {}
-          setState(initial);
+          try { await setDoc(ref, levelOnly(initial)); } catch {}
+          levelData = initial;
         } else {
-          setState(level === 2 ? defaultStateL2(null) : defaultState());
+          levelData = level === 2 ? defaultStateL2(null) : defaultState();
         }
-        setLoaded(true);
-        setSyncStatus("synced");
+        publish();
       },
       () => { if (!cancelled) { setSyncStatus("error"); setLoaded(true); } }
     );
-    return () => { cancelled = true; unsub(); };
+    return () => { cancelled = true; unsubShared(); unsubLevel(); };
   }, [authenticated, readOnly, level]);
 
   const submitEnter = useCallback((value) => {
@@ -8911,19 +9024,89 @@ export default function LifeRPG() {
     } catch {}
   }, [authConfig]);
 
+  useEffect(() => { stateRef.current = state; }, [state]);
+  useEffect(() => {
+    if (!authenticated || !SYNC_ENABLED || tab !== "calendar" || overview) return;
+    const otherLv = level === 2 ? 1 : 2;
+    let off = false;
+    const unsub = onSnapshot(
+      doc(db, QUESTS_COLLECTION, otherLv === 2 ? L2_DOC_ID : MAIN_DOC_ID),
+      (snap) => {
+        if (off || otherDirtyRef.current) return;
+        const raw = snap.exists() ? (otherLv === 2 ? migrateStateL2(snap.data()) : migrateState(snap.data())) : (otherLv === 2 ? defaultStateL2(null) : defaultState());
+        setOtherData(levelOnly(raw));
+      },
+      () => {}
+    );
+    return () => { off = true; unsub(); };
+  }, [authenticated, level, tab, overview]);
+  const otherFull = useMemo(
+    () => (otherData && state ? composeState(otherData, sharedFromState(state)) : null),
+    [otherData, state]
+  );
+  // Edit the other level from the Calendar: its own quest part is kept here
+  // (saved with Save); changes to diet/planner/workout go to the shared state.
+  const setOther = useCallback((mutator) => {
+    const cur = stateRef.current;
+    if (readOnly || !otherData || !cur) return;
+    const otherLv = level === 2 ? 1 : 2;
+    const base = composeState(otherData, sharedFromState(cur));
+    const draft = JSON.parse(JSON.stringify(base));
+    mutator(draft);
+    const lvlNext = levelOnly(draft);
+    const locked = otherLv === 1 && dayIndex(new Date()) > TOTAL_DAYS + L1_GRACE_DAYS;
+    if (!locked && JSON.stringify(lvlNext) !== JSON.stringify(levelOnly(base))) {
+      setOtherData(lvlNext);
+      otherDirtyRef.current = true;
+      setDirty(true);
+      setSyncStatus("unsaved");
+    }
+    if (JSON.stringify(sharedFromState(draft)) !== JSON.stringify(sharedFromState(base))) {
+      setState((prev) => ({ ...prev, diet: draft.diet, planner: draft.planner, vitality: { ...prev.vitality, gym: draft.vitality.gym } }));
+      setDirty(true);
+      setSyncStatus("unsaved");
+    }
+  }, [readOnly, otherData, level]);
+
   const update = useCallback((mutator) => {
-    if (viewOnly) return; // safety net — read-only / archived sessions never write
+    if (readOnly) return; // safety net — read-only sessions never write
     setState((prev) => {
       const next = JSON.parse(JSON.stringify(prev));
       mutator(next);
+      syncStrengthFromLog(next);
+      // An archived Level 1 only accepts changes to the shared data (diet,
+      // planner, workout); anything that touches Level 1's own quest is dropped.
+      if (l1Archived && JSON.stringify(levelOnly(prev)) !== JSON.stringify(levelOnly(next))) return prev;
       return next;
     });
     setDirty(true);
     setSyncStatus("unsaved");
-  }, [viewOnly]);
+  }, [readOnly, l1Archived]);
+
+  // Write the parts of `st` that changed: this level's doc (unless Level 1 is
+  // archived) and/or the shared doc.
+  const persistState = useCallback(async (st, lvl) => {
+    const writes = [];
+    const lJson = JSON.stringify(levelOnly(st));
+    const sJson = JSON.stringify(sharedFromState(st));
+    const archived = lvl === 1 && dayIndex(new Date()) > TOTAL_DAYS + L1_GRACE_DAYS;
+    if (!archived && lJson !== levelBaseRef.current) {
+      writes.push(setDoc(doc(db, QUESTS_COLLECTION, lvl === 2 ? L2_DOC_ID : MAIN_DOC_ID), JSON.parse(lJson)).then(() => { levelBaseRef.current = lJson; }));
+    }
+    if (sJson !== sharedBaseRef.current) {
+      writes.push(setDoc(doc(db, QUESTS_COLLECTION, SHARED_DOC_ID), JSON.parse(sJson)).then(() => { sharedBaseRef.current = sJson; }));
+    }
+    await Promise.all(writes);
+  }, []);
+  const persistOther = useCallback(async () => {
+    if (!otherDirtyRef.current || !otherData) return;
+    const otherLv = level === 2 ? 1 : 2;
+    await setDoc(doc(db, QUESTS_COLLECTION, otherLv === 2 ? L2_DOC_ID : MAIN_DOC_ID), JSON.parse(JSON.stringify(otherData)));
+    otherDirtyRef.current = false;
+  }, [otherData, level]);
 
   const saveNow = useCallback(() => {
-    if (viewOnly || !state) return;
+    if (readOnly || !state) return;
     setSyncStatus("saving");
     if (!SYNC_ENABLED) {
       try {
@@ -8935,21 +9118,22 @@ export default function LifeRPG() {
       }
       return;
     }
-    const ref = doc(db, QUESTS_COLLECTION, level === 2 ? L2_DOC_ID : MAIN_DOC_ID);
-    setDoc(ref, state)
+    Promise.all([persistState(state, level), persistOther()])
       .then(() => {
         setDirty(false);
         setSyncStatus("synced");
       })
       .catch(() => setSyncStatus("error"));
-  }, [viewOnly, state, level]);
+  }, [readOnly, state, level, persistState, persistOther]);
 
   const switchLevel = useCallback(async (n) => {
     if (n === level) return;
     // Never lose edits: flush anything unsaved to the level we're leaving.
-    if (dirtyRef.current && !viewOnly && state) {
-      try { await setDoc(doc(db, QUESTS_COLLECTION, level === 2 ? L2_DOC_ID : MAIN_DOC_ID), state); } catch {}
+    if (dirtyRef.current && !readOnly && state) {
+      try { await Promise.all([persistState(state, level), persistOther()]); } catch {}
     }
+    otherDirtyRef.current = false;
+    setOtherData(null);
     dirtyRef.current = false;
     setDirty(false);
     setMenuOpen(false);
@@ -8959,7 +9143,7 @@ export default function LifeRPG() {
     setLoaded(false);
     setState(null);
     setLevel(n);
-  }, [level, viewOnly, state]);
+  }, [level, readOnly, state, persistState, persistOther]);
 
   const pickLevel = useCallback((n) => { setOverview(false); switchLevel(n); }, [switchLevel]);
   const openOverview = useCallback(() => { setMenuOpen(false); setOverview(true); }, []);
@@ -9020,10 +9204,15 @@ export default function LifeRPG() {
       setResetBusy(false);
       return;
     }
-    const initial = level === 2 ? defaultStateL2(null) : defaultState();
+    // Only this level's quest is reset; diet, planner and workout are shared by
+    // both levels, so they are kept.
+    const fresh = level === 2 ? defaultStateL2(null) : defaultState();
+    const initial = state ? composeState(fresh, sharedFromState(state)) : fresh;
     const ref = doc(db, QUESTS_COLLECTION, level === 2 ? L2_DOC_ID : MAIN_DOC_ID);
     try {
-      await setDoc(ref, initial);
+      const lv = levelOnly(initial);
+      await setDoc(ref, lv);
+      levelBaseRef.current = JSON.stringify(lv);
     } catch {
       setSyncStatus("error");
     }
@@ -9033,7 +9222,7 @@ export default function LifeRPG() {
     setResetBusy(false);
     setResetPanelOpen(false);
     setResetCodeInput("");
-  }, [resetCodeInput, authConfig, level]);
+  }, [resetCodeInput, authConfig, level, state]);
 
   const changeCode = useCallback(() => {
     if (typeof window !== "undefined") localStorage.removeItem(CODE_STORAGE_KEY);
@@ -9061,8 +9250,6 @@ export default function LifeRPG() {
       <div className={`theme-${mode}`}>
         <style>{THEME_CSS}</style>
         <CodeGate
-          mode={mode}
-          onToggleTheme={toggleTheme}
           checking={authConfig === undefined}
           busy={authBusy}
           setupMode={authConfig === null}
@@ -9138,7 +9325,7 @@ export default function LifeRPG() {
   gymPlannedToday = gymSchedToday ? gymSchedToday.days?.[gymTodayKey()] : null;
   gymLogToday = state.vitality.gym?.logs?.[todayKey];
   gymPendingToday = !!gymPlannedToday && !gymPlannedToday.muscles?.includes("Rest")
-    && !(gymLogToday && (gymLogToday.skipped || (gymLogToday.exercises || []).every((e) => e.sets.length > 0 && e.sets.every((x) => x.completed))));
+    && !(gymLogToday && (gymLogToday.skipped || gymLogComplete(gymLogToday)));
   navBadges = viewOnly ? {} : {
     resolve: resolveDailyPending || carePending,
     vitality: mtPendingToday || gymPendingToday,
@@ -9209,10 +9396,11 @@ export default function LifeRPG() {
 
   return (
     <ThemeModeContext.Provider value={mode}>
+    <ViewerReadOnlyContext.Provider value={readOnly}>
     <ReadOnlyContext.Provider value={viewOnly}>
     <div
       className={`theme-${mode}`}
-      style={{ "--accent": rankTint, "--glow": `color-mix(in srgb, ${rankTint} 32%, transparent)` }}
+      style={{ "--on-accent": rankTint === RANK_COLORS.dark.SS ? "#0B1020" : "#fff", "--accent": rankTint, "--glow": `color-mix(in srgb, ${rankTint} 32%, transparent)` }}
     >
       <style>{THEME_CSS}</style>
       <div
@@ -9261,8 +9449,6 @@ export default function LifeRPG() {
         <TopAppBar
           syncStatus={syncStatus}
           onMenu={() => setMenuOpen((o) => !o)}
-          mode={mode}
-          onToggleTheme={toggleTheme}
           readOnly={readOnly}
           onQuoteClick={() => setQuoteOpen(true)}
           showQuoteButton={tab === "dashboard" && !overview}
@@ -9271,11 +9457,17 @@ export default function LifeRPG() {
           overview={overview}
           onOverview={openOverview}
           l1Archived={l1Archived}
+          l1Grace={l1Grace}
         />
 
+        {l1Grace && !readOnly && (
+          <div style={{ margin: "0 12px 4px", padding: "6px 12px", borderRadius: 10, background: mix(C.accent, 10), border: `1px solid ${mix(C.accent, 28)}`, fontFamily: mono, fontSize: 10.5, color: C.onSurfaceVariant, flexShrink: 0 }}>
+            {LEVEL_NAMES[1]} has ended. You can still edit its earlier dates until 5 Nov 2026, then it locks to view only.
+          </div>
+        )}
         {l1Archived && (
           <div style={{ margin: "0 12px 4px", padding: "6px 12px", borderRadius: 10, background: mix(C.accent, 10), border: `1px solid ${mix(C.accent, 28)}`, fontFamily: mono, fontSize: 10.5, color: C.onSurfaceVariant, flexShrink: 0 }}>
-            {LEVEL_NAMES[1]} is archived — view only. Switch to {LEVEL_NAMES[2]} from the pill above.
+            {LEVEL_NAMES[1]} is archived — its quest is view only. Diet, planner, workout and calendar are shared with {LEVEL_NAMES[2]} and stay editable.
           </div>
         )}
 
@@ -9385,7 +9577,7 @@ export default function LifeRPG() {
                   onClick={submitChangeCodes}
                   disabled={codesSaving}
                   style={{
-                    flex: 1, padding: "10px 0", borderRadius: 12, background: C.accent, color: "#fff",
+                    flex: 1, padding: "10px 0", borderRadius: 12, background: C.accent, color: "var(--on-accent)",
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
                     fontWeight: 700, fontSize: 13, opacity: codesSaving ? 0.7 : 1,
                   }}
@@ -9416,7 +9608,7 @@ export default function LifeRPG() {
                 Reset all data
               </div>
               <p style={{ color: C.onSurfaceVariant, fontSize: 12, marginBottom: 14, lineHeight: 1.4 }}>
-                This permanently erases all progress and can't be undone. Enter your write code to confirm.
+                This permanently erases this level's quest progress and can't be undone (diet, planner and workout are shared by both levels and are kept). Enter your write code to confirm.
               </p>
               <label style={{ color: C.faint, fontSize: 10.5, fontFamily: sans, fontWeight: 600 }}>WRITE CODE</label>
               <input
@@ -9599,7 +9791,7 @@ export default function LifeRPG() {
                   onClick={saveReaders}
                   disabled={readersSaving}
                   style={{
-                    width: "100%", padding: "10px 0", borderRadius: 12, background: C.accent, color: "#fff",
+                    width: "100%", padding: "10px 0", borderRadius: 12, background: C.accent, color: "var(--on-accent)",
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
                     fontWeight: 700, fontSize: 13, opacity: readersSaving ? 0.7 : 1, marginBottom: 10,
                   }}
@@ -9699,8 +9891,8 @@ export default function LifeRPG() {
                 label="Planner"
                 metric={`${todayPlannerRemaining}`}
                 sub="tasks"
-                onClick={() => { if (!viewOnly) setTab("planner"); }}
-                locked={viewOnly}
+                onClick={() => { if (!readOnly) setTab("planner"); }}
+                locked={readOnly}
               />
             </div>
           </div>
@@ -9763,20 +9955,20 @@ export default function LifeRPG() {
           )}
           {!isL2 && tab === "wisdom" && <WisdomTab s={state.wisdom} set={update} />}
           {!isL2 && tab === "vitality" && <VitalityTab s={state.vitality} effective={effVitality} set={update} locked={questLocked} onOpenProgress={() => setTab("progress")} />}
-          {tab === "progress" && <ProgressTab gym={state.vitality.gym} />}
+          {tab === "progress" && <SharedScope><ProgressTab gym={state.vitality.gym} /></SharedScope>}
           {!isL2 && tab === "wealth" && <WealthTab s={state.wealth} set={update} locked={questLocked} />}
           {!isL2 && tab === "resolve" && <ResolveTab s={state.resolve} effective={effResolve} set={update} locked={questLocked} wealth={state.wealth} care={state.care} careOpen={careOpen} setCareOpen={setCareOpen} />}
           {!isL2 && tab === "achievements" && <AchievementsTab state={achieveState} overall={overall} />}
-          {tab === "diet" && <DietTab s={state.diet} set={update} />}
-          {tab === "planner" && (viewOnly ? <RestrictedTab label="Planner" /> : <PlannerTab s={state.planner} set={update} />)}
-          {!isL2 && tab === "calendar" && <CalendarTab state={state} set={update} />}
+          {tab === "diet" && <SharedScope><DietTab s={state.diet} set={update} /></SharedScope>}
+          {tab === "planner" && (readOnly ? <RestrictedTab label="Planner" /> : <SharedScope><PlannerTab s={state.planner} set={update} /></SharedScope>)}
+          {tab === "calendar" && <CommonCalendarTab level={level} state={state} other={otherFull} set={update} setOther={setOther} l1Locked={l1Archived || (level === 2 && dayIndex(new Date()) > TOTAL_DAYS + L1_GRACE_DAYS)} />}
           {isL2 && <Level2Tabs tab={tab} cx={L2cx} s={state} set={update} today={today} setTab={setTab} careOpen={careOpen} setCareOpen={setCareOpen} />}
 
           {/* FAB — Save button (bottom-right slot). The Quote button now
               lives in the top bar, so this slot is Save-only: it fades
               in the instant something changes and fades out once clean. */}
           <div style={{ position: "sticky", bottom: 16, height: 54, pointerEvents: "none" }}>
-            {!viewOnly && (
+            {!readOnly && (
               <Touchable
                 onClick={saveNow}
                 disabled={!dirty || syncStatus === "saving"}
@@ -9814,6 +10006,7 @@ export default function LifeRPG() {
       </div>
     </div>
     </ReadOnlyContext.Provider>
+    </ViewerReadOnlyContext.Provider>
     </ThemeModeContext.Provider>
   );
 }
