@@ -5261,6 +5261,90 @@ function CalendarSharedExtras({ date, state, set }) {
 }
 
 /* Day panel for a date that belongs to the other level. */
+
+/* ---------- Calendar filter ----------
+   "All" keeps the usual cell (protein + status dots). Picking one item shows
+   only that item in every day cell: a number for countable things (DSA
+   solved, protein grams, planner tasks done) and a single dot for the rest
+   (filled = done, partly lit = partly done, hollow = not done, nothing = not
+   planned that day). */
+function calFilterOptions() {
+  return [
+    { id: "all", label: "All", color: C.accent },
+    { id: "protein", label: "Protein", color: C.accent, hint: "grams of protein" },
+    { id: "dsa", label: "DSA", color: C.wisdom, l2: true, hint: "questions solved" },
+    { id: "mt", label: "Muay Thai", color: C.vitality, hint: "dot = attended" },
+    { id: "wk", label: "Strength", color: C.vitality, l2: true, hint: "dot = session done" },
+    { id: "gym", label: "Workout", color: C.vitality, hint: "dot = logged workout" },
+    { id: "resolve", label: "Resolve", color: C.resolve, hint: "dot = habits done" },
+    { id: "care", label: "Skin & hair", color: C.accent, hint: "dot = steps done" },
+    { id: "planner", label: "Planner", color: C.accent, hint: "tasks done" },
+  ];
+}
+// -> { count: "12" } | { frac: 0..1 } | null (not applicable on that date)
+function calFilterValue(id, ds, lv, sx, shared) {
+  const status = sx ? (lv === 1 ? calDayStatus(sx, ds) : l2CalDayStatus(sx, ds)) : null;
+  const wd = parseDS(ds).getDay();
+  switch (id) {
+    case "protein": {
+      const g = Math.round(sharedDayStatus(shared, ds).dietGrams || 0);
+      return g > 0 ? { count: `${g}g` } : { frac: 0 };
+    }
+    case "dsa": {
+      if (lv !== 2 || !sx) return null;
+      const n = Number(sx.wisdom?.dsa?.[ds]) || 0;
+      return n > 0 ? { count: String(n) } : { frac: 0 };
+    }
+    case "mt": {
+      if (!sx) return null;
+      if (lv === 1) return MT_DATES.includes(ds) ? { frac: sx.vitality.muayThai?.[ds] ? 1 : 0 } : null;
+      const v = sx.vitality;
+      const st = v.mt?.[ds];
+      if (!((v.mtDays.includes(wd) && wd !== 5) || st)) return null;
+      return { frac: st === "done" || st === "leave" ? 1 : 0 };
+    }
+    case "wk": {
+      if (lv !== 2 || !sx) return null;
+      const v = sx.vitality;
+      const st = v.wk?.[ds];
+      if (!(v.wkDays.includes(wd) || st)) return null;
+      return { frac: st === "done" || st === "leave" ? 1 : 0 };
+    }
+    case "gym": {
+      const log = shared.vitality?.gym?.logs?.[ds] || null;
+      return { frac: gymLogComplete(log) ? 1 : log && !log.skipped ? 0.5 : 0 };
+    }
+    case "resolve": return status ? { frac: status.resolveFrac || 0 } : null;
+    case "care": return status ? { frac: status.careFrac || 0 } : null;
+    case "planner": {
+      const tasks = shared.planner?.days?.[ds] || [];
+      if (!tasks.length) return null;
+      const done = tasks.filter((t) => t.completed).length;
+      return done > 0 ? { count: String(done) } : { frac: 0 };
+    }
+    default: return null;
+  }
+}
+function FilterMark({ val, color }) {
+  if (!val) return <div style={{ height: 12 }} />;
+  if (val.count !== undefined) {
+    return <span style={{ fontFamily: mono, fontSize: 10.5, lineHeight: "12px", fontWeight: 800, color }}>{val.count}</span>;
+  }
+  const pct = clamp(val.frac, 0, 1);
+  return (
+    <div style={{ height: 12, display: "flex", alignItems: "center" }}>
+      <div
+        style={{
+          width: 8, height: 8, borderRadius: "50%", boxSizing: "border-box",
+          background: pct > 0 ? mix(color, Math.round(30 + pct * 70)) : "transparent",
+          border: pct > 0 ? "none" : `1.5px solid ${C.outlineVariant}`,
+          boxShadow: pct >= 1 ? `0 0 5px ${mix(color, 70)}` : "none",
+        }}
+      />
+    </div>
+  );
+}
+
 /* One calendar for both levels. Each date shows ITS level's items and legend:
    Level 1 dates (2 Aug – 31 Oct) use Level 1's quest, Level 2 dates (1 Nov –
    30 Jan) use Level 2's. The open level's state is live; the other level is
@@ -5279,6 +5363,7 @@ function CommonCalendarTab({ level, state, other, set, setOther, l1Locked }) {
   const [monthIdx, setMonthIdx] = useState(() => monthIdxOf(startDs));
   const [selected, setSelected] = useState(startDs);
   const [view, setView] = useState("daily");
+  const [calFilter, setCalFilter] = useState("all"); // "all" or one item id (see calFilterOptions)
   const [weekLv, setWeekLv] = useState(null); // null = follow the selected day's level
   const [week1, setWeek1] = useState(() => currentWeekNum());
   const [week2, setWeek2] = useState(() => l2WeekOf(startDs));
@@ -5291,6 +5376,9 @@ function CommonCalendarTab({ level, state, other, set, setOther, l1Locked }) {
 
   const { label: monthLabel, year, month } = ALL_CAL_MONTHS[monthIdx];
   const monthLv = year * 12 + month >= 2026 * 12 + 10 ? 2 : 1;
+  const filterOpts = calFilterOptions().filter((o) => !o.l2 || monthLv === 2);
+  const activeFilter = filterOpts.find((o) => o.id === calFilter) || filterOpts[0];
+  const filtering = activeFilter.id !== "all";
   const startWeekday = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const cells = [];
@@ -5341,15 +5429,46 @@ function CommonCalendarTab({ level, state, other, set, setOther, l1Locked }) {
             Level {monthLv} · {LEVEL_NAMES[monthLv]}
           </div>
 
-          <div className="mx-4 mb-2 flex items-center justify-center gap-3 flex-wrap">
-            <div className="flex items-center gap-1.5">
-              <span style={{ fontFamily: mono, fontSize: 10, fontWeight: 700, color: C.accent }}>42g</span>
-              <span style={{ fontFamily: sans, fontSize: 10.5, color: C.onSurfaceVariant }}>Protein</span>
+          <div className="mx-4 mb-2 flex items-center gap-2">
+            <span style={{ fontFamily: mono, fontSize: 9.5, color: C.faint, letterSpacing: 0.6, flexShrink: 0 }}>FILTER</span>
+            <div className="flex items-center gap-1.5" style={{ overflowX: "auto", scrollbarWidth: "none", paddingBottom: 2 }}>
+              {filterOpts.map((o) => {
+                const on = o.id === activeFilter.id;
+                return (
+                  <Touchable
+                    key={o.id}
+                    onClick={() => setCalFilter(o.id)}
+                    style={{
+                      flexShrink: 0, borderRadius: 999, padding: "4px 11px",
+                      background: on ? mix(o.color, 18) : C.containerHigh,
+                      border: `1px solid ${on ? mix(o.color, 55) : C.outlineVariant}`,
+                    }}
+                  >
+                    <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 11.5, whiteSpace: "nowrap", color: on ? o.color : C.onSurfaceVariant }}>{o.label}</span>
+                  </Touchable>
+                );
+              })}
             </div>
-            {monthLv === 2 && <LegendDot color={C.wisdom} label="Wisdom" />}
-            <LegendDot color={C.vitality} label="Vitality" />
-            <LegendDot color={C.resolve} label="Resolve" />
-            <LegendDot color={C.accent} label="Care" />
+          </div>
+
+          <div className="mx-4 mb-2 flex items-center justify-center gap-3 flex-wrap">
+            {filtering ? (
+              <>
+                <LegendDot color={activeFilter.color} label={activeFilter.label} />
+                <span style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>{activeFilter.hint}</span>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center gap-1.5">
+                  <span style={{ fontFamily: mono, fontSize: 10, fontWeight: 700, color: C.accent }}>42g</span>
+                  <span style={{ fontFamily: sans, fontSize: 10.5, color: C.onSurfaceVariant }}>Protein</span>
+                </div>
+                {monthLv === 2 && <LegendDot color={C.wisdom} label="Wisdom" />}
+                <LegendDot color={C.vitality} label="Vitality" />
+                <LegendDot color={C.resolve} label="Resolve" />
+                <LegendDot color={C.accent} label="Care" />
+              </>
+            )}
           </div>
 
           <div className="mx-4" style={{ background: C.container, border: `1px solid ${C.outlineVariant}`, borderRadius: 16, padding: 12 }}>
@@ -5381,6 +5500,10 @@ function CommonCalendarTab({ level, state, other, set, setOther, l1Locked }) {
                     }}
                   >
                     <span style={{ fontFamily: mono, fontSize: 11, color: isSel ? C.accent : C.onSurface, fontWeight: isToday ? 800 : 500 }}>{d.getDate()}</span>
+                    {filtering ? (
+                      <FilterMark val={inRange ? calFilterValue(activeFilter.id, ds, lv, sx, state) : null} color={activeFilter.color} />
+                    ) : (
+                      <>
                     <span style={{ fontFamily: mono, fontSize: 8, lineHeight: "9px", fontWeight: 700, color: status?.dietGrams ? C.accent : "transparent" }}>
                       {status?.dietGrams ? `${Math.round(status.dietGrams)}g` : "0g"}
                     </span>
@@ -5392,6 +5515,8 @@ function CommonCalendarTab({ level, state, other, set, setOther, l1Locked }) {
                         <StatusDot frac={status?.careFrac} color={C.accent} />
                       </div>
                     ) : <div style={{ height: 5 }} />}
+                      </>
+                    )}
                   </Touchable>
                 );
               })}
@@ -6903,9 +7028,9 @@ function rankInfoL2(totalXP) {
 }
 
 const L2_BOOKS = [
-  { id: "seduction", title: "The Art of Seduction", reading: 34, bonus: 3, chapters: 24 },
+  { id: "seduction", title: "The Art of Seduction", reading: 34, bonus: 3, chapters: 34 },
   { id: "chanakya", title: "Chanakya in You", reading: 30, bonus: 3, chapters: 60 }, // 0.5 XP a chapter
-  { id: "subconscious", title: "The Power of Your Subconscious Mind", reading: 20, bonus: 3, chapters: 15 },
+  { id: "subconscious", title: "The Power of Your Subconscious Mind", reading: 21, bonus: 3, chapters: 21 },
   { id: "money", title: "The Psychology of Money", reading: 20, bonus: 3, chapters: 20 },
 ];
 const L2_HABITS = [
@@ -7031,6 +7156,12 @@ function migrateStateL2(parsed) {
   // default; a value you've edited yourself is left alone.
   const ch = next.wisdom?.books?.chanakya;
   if (ch && Number(ch.chapters) === 20) ch.chapters = 60;
+  // Chapter counts corrected: Art of Seduction 34 (was 24), Subconscious Mind 21 (was 15).
+  // Only the old defaults are replaced; progress ("done") is kept.
+  const sed = next.wisdom?.books?.seduction;
+  if (sed && Number(sed.chapters) === 24) sed.chapters = 34;
+  const sub = next.wisdom?.books?.subconscious;
+  if (sub && Number(sub.chapters) === 15) sub.chapters = 21;
   return next;
 }
 
@@ -7774,7 +7905,7 @@ function L2CalendarWeekCard({ w, s, set }) {
    (meditate + brush teeth) show from 6 PM. Missed-habit choices and
    leaves/penalties still live in the Resolve / Vitality / Penalties tabs.
 --------------------------------------------------------------- */
-function QuestBarL2({ s, set, today, cx, onOpenCare }) {
+function QuestBarL2({ s, set, today, cx, onOpenCare, onOpenTab }) {
   const state = s;
   const readOnly = useContext(ReadOnlyContext);
   const mode = useContext(ThemeModeContext);
@@ -7802,6 +7933,9 @@ function QuestBarL2({ s, set, today, cx, onOpenCare }) {
       onComplete: () => set((d) => { d.vitality.mt[ds] = "done"; }) }] : []),
     ...(v.wkDays.includes(wd) ? [{ id: "wk", short: "Strength", title: "Strength workout", sub: "Today's session", color: C.vitality, done: !!v.wk[ds],
       onComplete: () => set((d) => { d.vitality.wk[ds] = "done"; }) }] : []),
+    { id: "dsa", short: "DSA", title: "DSA questions",
+      sub: `${Number(s.wisdom.dsa?.[ds]) || 0} / ${dsaTarget(ds)} today · 3 solved = 1 XP`,
+      color: C.wisdom, goTab: "wisdom", done: (Number(s.wisdom.dsa?.[ds]) || 0) >= dsaTarget(ds) },
     ...L2_HABITS.filter((h) => h.k !== "med" || evening).map((h) => ({
       id: `h-${h.k}`, short: h.k, title: h.label, sub: `+${h.xp} XP`, color: C.resolve, done: !!l2HabitStatus(s, ds, h.k),
       ...(h.k === "skin" || h.k === "hair"
@@ -7840,6 +7974,7 @@ function QuestBarL2({ s, set, today, cx, onOpenCare }) {
   const cardProps = (t, closeSheet, canNext) => {
     const nxt = canNext ? "← next" : "";
     const join = (a, b) => [a, b].filter(Boolean).join(" · ");
+    if (t.goTab) return { title: t.title, sub: t.sub, color: t.color, tag: join(nxt, "log in Wisdom"), onTap: () => { closeSheet?.(); onOpenTab?.(t.goTab); } };
     return t.open
       ? { title: t.title, sub: t.sub, color: t.color, tag: join(nxt, "open in Resolve"), onTap: () => { closeSheet?.(); onOpenCare(t.open); } }
       : { title: t.title, sub: t.sub, color: t.color, onComplete: t.onComplete, disabled: readOnly, tag: join(nxt, readOnly ? "" : "done →") };
@@ -7950,10 +8085,7 @@ function QuestBarL2({ s, set, today, cx, onOpenCare }) {
 }
 
 function L2HomeTab({ cx, s, set, today, setTab, setCareOpen }) {
-  const ds = cx.todayKey;
   const inRange = cx.idxRaw >= 1 && cx.idxRaw <= L2_DAYS;
-  const target = dsaTarget(ds);
-  const solved = Number(s.wisdom.dsa?.[ds]) || 0;
   const worst = cx.pending.reduce((m, p) => Math.max(m, p.level), 0);
   const rows = [
     { icon: BookOpen, label: "Wisdom", color: C.wisdom, xp: cx.w, tag: "Books & daily DSA", tab: "wisdom" },
@@ -7970,16 +8102,7 @@ function L2HomeTab({ cx, s, set, today, setTab, setCareOpen }) {
           </span>
         </div>
       )}
-      {inRange && (
-        <div style={{ background: C.containerHigh, border: `1px solid ${solved >= target ? mix(C.wisdom, 40) : C.outlineVariant}`, borderLeft: `3px solid ${solved >= target ? C.wisdom : C.outlineVariant}`, borderRadius: 12, padding: "8px 12px", marginBottom: 10 }}>
-          <div style={{ marginBottom: 8 }}>
-            <div style={{ color: C.onSurface, fontSize: 13 }}>DSA questions</div>
-            <div style={{ fontFamily: mono, fontSize: 10, color: C.faint }}>{solved} / {target} today · every 3 solved = 1 XP</div>
-          </div>
-          <DsaLog date={ds} s={s} set={set} color={C.wisdom} compact />
-        </div>
-      )}
-      <QuestBarL2 s={s} set={set} today={today} cx={cx} onOpenCare={(w) => { setCareOpen(w); setTab("resolve"); }} />
+      <QuestBarL2 s={s} set={set} today={today} cx={cx} onOpenCare={(w) => { setCareOpen(w); setTab("resolve"); }} onOpenTab={setTab} />
 
       {cx.pending.length > 0 && (
         <Touchable onClick={() => setTab("penalties")} style={{ background: mix(C.danger, 10), border: `1px solid ${mix(C.danger, 40)}`, borderRadius: 14, display: "block", marginBottom: 10 }}>
@@ -8077,6 +8200,73 @@ function L2WisdomTab({ cx, s, set, today }) {
 }
 
 /* ---------- Vitality ---------- */
+/* This week's running distance: a compact, always-open card with a 0-10 km slider
+   (plus -1 / +1 buttons). The count can go past 10 with the + button, but the
+   slider and bar cap at 10. It writes to vitality.runKm[week], the same value the
+   Running mission below edits. */
+function L2RunSlider({ cx, v, set }) {
+  const color = C.vitality;
+  const readOnly = useContext(ReadOnlyContext);
+  const w = clamp(Math.ceil(cx.idxRaw / 7), 1, L2_WEEKS);
+  const km = Number(v.runKm?.[w]) || 0;
+  const setKm = (n) => set((d) => {
+    if (!d.vitality.runKm) d.vitality.runKm = {};
+    const x = Math.max(0, Math.round(n * 10) / 10);
+    if (x > 0) d.vitality.runKm[w] = x; else delete d.vitality.runKm[w];
+  });
+  const SLIDER_MAX = 10;
+  const pct = clamp(km / SLIDER_MAX, 0, 1) * 100;
+  const done = km >= SLIDER_MAX;
+  const fill = done ? color : C.accent;
+  const btn = { width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 };
+  return (
+    <div
+      className="mx-4 mb-3"
+      style={{
+        position: "relative", borderRadius: 9.5, padding: 1.5,
+        background: `linear-gradient(135deg, ${mix(color, 90)}, ${mix(color, 25)} 45%, ${mix(color, 90)} 100%)`,
+        boxShadow: `0 0 16px ${mix(color, 35)}`,
+      }}
+    >
+    <div style={{ position: "relative", background: C.container, borderRadius: 8, padding: "10px 14px 8px" }} className="overflow-hidden">
+      <style>{`
+        .l2run{-webkit-appearance:none;appearance:none;width:100%;height:20px;background:transparent;margin:0;outline:none;cursor:pointer}
+        .l2run:disabled{cursor:default;opacity:.6}
+        .l2run::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:linear-gradient(90deg,var(--run-fill) var(--run-pct),var(--run-track) var(--run-pct))}
+        .l2run::-moz-range-track{height:6px;border-radius:3px;background:var(--run-track)}
+        .l2run::-moz-range-progress{height:6px;border-radius:3px;background:var(--run-fill)}
+        .l2run::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;margin-top:-6px;border-radius:50%;background:var(--run-color);border:2px solid var(--run-bg);box-shadow:0 0 0 1px var(--run-color),0 0 8px var(--run-glow)}
+        .l2run::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--run-color);border:2px solid var(--run-bg);box-shadow:0 0 0 1px var(--run-color),0 0 8px var(--run-glow)}
+      `}</style>
+      <div className="flex items-center justify-between" style={{ marginBottom: 4 }}>
+        <div className="flex items-baseline gap-2" style={{ minWidth: 0, flex: 1 }}>
+          <span style={{ fontFamily: sans, fontWeight: 700, fontSize: 15.5, color: C.onSurface }}>Run this week</span>
+          <span style={{ fontFamily: mono, fontSize: 9.5, color: C.faint, whiteSpace: "nowrap" }}>Wk {w}</span>
+        </div>
+        <span style={{ fontFamily: mono, color, fontSize: 11.5, flexShrink: 0 }}>{km} / 10 km · {Math.floor(km / 5)} XP</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <Touchable writeAction onClick={() => setKm(km - 1)} style={{ ...btn, color: C.onSurfaceVariant, border: `1px solid ${C.outline}` }}>
+          <Minus size={12} />
+        </Touchable>
+        <input
+          className="l2run"
+          type="range" min="0" max={SLIDER_MAX} step="1"
+          value={Math.min(km, SLIDER_MAX)}
+          disabled={readOnly}
+          onChange={(e) => setKm(parseFloat(e.target.value))}
+          aria-label="Kilometres run this week"
+          style={{ "--run-pct": `${pct}%`, "--run-fill": fill, "--run-track": C.outlineVariant, "--run-color": color, "--run-bg": C.container, "--run-glow": mix(color, 55), flex: 1 }}
+        />
+        <Touchable writeAction onClick={() => setKm(km + 1)} rippleColor={mix(color, 20)} style={{ ...btn, color, border: `1px solid ${color}` }}>
+          <Plus size={12} />
+        </Touchable>
+      </div>
+    </div>
+    </div>
+  );
+}
+
 function L2VitalityTab({ cx, s, set, today, onOpenProgress }) {
   const color = C.vitality;
   const v = s.vitality;
@@ -8086,6 +8276,7 @@ function L2VitalityTab({ cx, s, set, today, onOpenProgress }) {
     <div className="pb-4">
       <ScreenHeader title="Vitality" sub="Muay Thai, strength, running and events." color={color} score={cx.v} />
       <VitalityOverviewTiles s={v} eff={{ treks: Number(v.events) || 0 }} onOpenProgress={onOpenProgress} ringMax={8} ringLabel="EVENTS" />
+      <L2RunSlider cx={cx} v={v} set={set} />
       <SharedScope><WorkoutCard s={v} set={set} locked={false} /></SharedScope>
       <Mission title="Muay Thai" points={v.mtDays.length * L2_WEEKS} earned={cx.parts.mtXP} color={color}>
         <L2AttendanceGrid kind="mt" s={s} set={set} today={today} />
